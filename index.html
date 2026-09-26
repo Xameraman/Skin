@@ -23,7 +23,8 @@
       </div>
 
       <div class="top-actions">
-        <button class="ghost-btn" id="newSkinBtn" title="Reset to a blank skin">New</button>
+        <button class="ghost-btn" id="newSkinBtn" title="Load a complete starter skin">New</button>
+        <button class="ghost-btn" id="templateBtn" title="Load the complete editable template">Template</button>
         <button class="ghost-btn" id="importBtn" title="Import a PNG skin">Import</button>
         <button class="primary-btn" id="exportBtn" title="Download your skin as PNG">Download PNG</button>
         <input type="file" id="fileInput" accept="image/png,.png" hidden />
@@ -55,6 +56,7 @@
           <label class="toggle-row"><span>Pixel grid</span><input type="checkbox" id="gridToggle" checked /><i></i></label>
           <label class="toggle-row"><span>Checkerboard</span><input type="checkbox" id="checkerToggle" checked /><i></i></label>
           <label class="toggle-row"><span>Mirror paint</span><input type="checkbox" id="mirrorToggle" /><i></i></label>
+          <label class="toggle-row"><span>Outer layer</span><input type="checkbox" id="outerToggle" checked /><i></i></label>
         </section>
 
         <section class="panel-section">
@@ -79,9 +81,13 @@
         <div class="stage-topline">
           <div class="document-meta">
             <span class="status-dot"></span>
-            <span id="docStatus">Untitled skin</span>
+            <span id="docStatus">Complete Starter Template</span>
             <span class="meta-divider">•</span>
             <span>64×64</span>
+          </div>
+          <div class="model-picker">
+            <span>Model</span>
+            <select id="modelSelect" aria-label="Skin model"><option value="classic">Classic · 4px arms</option><option value="slim">Slim · 3px arms</option></select>
           </div>
           <div class="stage-actions">
             <button class="icon-btn" id="checkerBtn" title="Toggle checkerboard">▦</button>
@@ -125,6 +131,12 @@
           <div class="checks" id="checks"></div>
         </section>
 
+        <section class="panel-section guide-section">
+          <div class="section-heading"><span>Template guide</span><span class="live-pill">GAME-READY</span></div>
+          <p>Start from the complete 64×64 template, then edit it pixel by pixel. The preview follows the same texture map used for export.</p>
+          <div class="guide-actions"><button class="mini-btn" id="guideBtn">View map</button><button class="mini-btn" id="downloadTemplateBtn">Download template</button></div>
+        </section>
+
         <section class="panel-section tips-section">
           <div class="section-heading"><span>Pixel tip</span></div>
           <p id="pixelTip">Keep hard edges clean. One texture pixel should stay one deliberate pixel — avoid soft brushes and blurred scaling.</p>
@@ -132,6 +144,22 @@
       </aside>
     </main>
 
+    <div class="guide-modal" id="guideModal" hidden>
+      <div class="guide-dialog" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
+        <div class="guide-dialog-top">
+          <div><div class="guide-eyebrow">64×64 TEXTURE MAP</div><h2 id="guideTitle">Complete skin template guide</h2></div>
+          <button class="icon-btn" id="closeGuideBtn" aria-label="Close guide">×</button>
+        </div>
+        <div class="guide-body">
+          <canvas id="guideCanvas" width="768" height="768"></canvas>
+          <div class="guide-copy">
+            <p><strong>Use Template</strong> loads a filled, editable starter with all of the main skin regions already mapped.</p>
+            <p><strong>Do not paint by appearance alone.</strong> The texture is an unfolded 3D model, so a single face can continue onto another part of the image.</p>
+            <p><strong>Classic</strong> uses 4-pixel-wide arms. <strong>Slim</strong> uses 3-pixel-wide arms. Minecraft's official guide distinguishes these models by arm width. <a href="https://www.minecraft.net/en-us/article/what-is-minecraft-skin" target="_blank" rel="noreferrer">Minecraft guide</a></p>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="toast-region" id="toastRegion" aria-live="polite"></div>
   </div>
 
