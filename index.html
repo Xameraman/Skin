@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0d12" />
+  <title>Nova Skin Studio — MCPE Skin Creator</title>
+  <meta name="description" content="A crisp, mobile-first Minecraft Bedrock skin creator." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div>
+          <div class="brand-name">Nova Skin Studio</div>
+          <div class="brand-subtitle">MCPE / Bedrock skin creator</div>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <button class="ghost-btn" id="newSkinBtn" title="Reset to a blank skin">New</button>
+        <button class="ghost-btn" id="importBtn" title="Import a PNG skin">Import</button>
+        <button class="primary-btn" id="exportBtn" title="Download your skin as PNG">Download PNG</button>
+        <input type="file" id="fileInput" accept="image/png,.png" hidden />
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar left-panel" aria-label="Editor tools">
+        <section class="panel-section tools-section">
+          <div class="section-heading"><span>Tools</span><kbd>1–6</kbd></div>
+          <div class="tool-grid">
+            <button class="tool-btn active" data-tool="pencil" title="Pencil (1)"><span class="tool-icon">✎</span><span>Pencil</span></button>
+            <button class="tool-btn" data-tool="eraser" title="Eraser (2)"><span class="tool-icon">⌫</span><span>Eraser</span></button>
+            <button class="tool-btn" data-tool="fill" title="Fill (3)"><span class="tool-icon">▧</span><span>Fill</span></button>
+            <button class="tool-btn" data-tool="picker" title="Eyedropper (4)"><span class="tool-icon">◉</span><span>Pick</span></button>
+            <button class="tool-btn" data-tool="line" title="Line (5)"><span class="tool-icon">╱</span><span>Line</span></button>
+            <button class="tool-btn" data-tool="rect" title="Rectangle (6)"><span class="tool-icon">□</span><span>Rect</span></button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading"><span>View</span></div>
+          <div class="view-buttons">
+            <button class="mini-btn" id="zoomOutBtn">−</button>
+            <div class="zoom-readout" id="zoomReadout">1000%</div>
+            <button class="mini-btn" id="zoomInBtn">+</button>
+            <button class="mini-btn wide" id="fitBtn">Fit</button>
+          </div>
+          <label class="toggle-row"><span>Pixel grid</span><input type="checkbox" id="gridToggle" checked /><i></i></label>
+          <label class="toggle-row"><span>Checkerboard</span><input type="checkbox" id="checkerToggle" checked /><i></i></label>
+          <label class="toggle-row"><span>Mirror paint</span><input type="checkbox" id="mirrorToggle" /><i></i></label>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading"><span>Palette</span><button class="tiny-link" id="clearHistoryBtn">Clear recent</button></div>
+          <div class="color-editor">
+            <input type="color" id="colorInput" value="#7fd7ff" aria-label="Color picker" />
+            <div class="hex-wrap"><span>#</span><input id="hexInput" value="7FD7FF" maxlength="6" spellcheck="false" aria-label="Hex color" /></div>
+          </div>
+          <div class="swatches" id="swatches"></div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading"><span>History</span></div>
+          <div class="history-buttons">
+            <button class="mini-btn wide" id="undoBtn">↶ Undo <kbd>Ctrl+Z</kbd></button>
+            <button class="mini-btn wide" id="redoBtn">↷ Redo <kbd>Ctrl+Y</kbd></button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="center-stage">
+        <div class="stage-topline">
+          <div class="document-meta">
+            <span class="status-dot"></span>
+            <span id="docStatus">Untitled skin</span>
+            <span class="meta-divider">•</span>
+            <span>64×64</span>
+          </div>
+          <div class="stage-actions">
+            <button class="icon-btn" id="checkerBtn" title="Toggle checkerboard">▦</button>
+            <button class="icon-btn" id="gridBtn" title="Toggle pixel grid">#</button>
+          </div>
+        </div>
+
+        <div class="editor-canvas-wrap" id="canvasWrap">
+          <div class="canvas-shadow"></div>
+          <canvas id="editorCanvas" width="640" height="640" aria-label="Minecraft skin texture editor"></canvas>
+          <div class="canvas-hint">Drag to paint • Pinch/scroll to zoom • Right-click to pick</div>
+        </div>
+
+        <div class="bottom-toolbar">
+          <div class="tool-context">
+            <span class="context-label">Active</span>
+            <strong id="activeToolLabel">Pencil</strong>
+            <span class="context-separator">·</span>
+            <span id="cursorReadout">X: — Y: —</span>
+          </div>
+          <div class="quick-colors" id="quickColors"></div>
+        </div>
+      </section>
+
+      <aside class="sidebar right-panel" aria-label="Preview and skin helpers">
+        <section class="panel-section preview-section">
+          <div class="section-heading"><span>Preview</span><span class="live-pill">LIVE</span></div>
+          <div class="preview-card" id="previewCard">
+            <canvas id="previewCanvas" width="360" height="420"></canvas>
+            <div class="preview-overlay">drag to rotate</div>
+          </div>
+          <div class="preview-controls">
+            <button class="mini-btn" id="frontBtn">Front</button>
+            <button class="mini-btn" id="backBtn">Back</button>
+            <button class="mini-btn" id="resetViewBtn">Reset</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading"><span>Skin checks</span></div>
+          <div class="checks" id="checks"></div>
+        </section>
+
+        <section class="panel-section tips-section">
+          <div class="section-heading"><span>Pixel tip</span></div>
+          <p id="pixelTip">Keep hard edges clean. One texture pixel should stay one deliberate pixel — avoid soft brushes and blurred scaling.</p>
+        </section>
+      </aside>
+    </main>
+
+    <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  </div>
+
+  <script src="src/app.js" type="module"></script>
+</body>
+</html>
