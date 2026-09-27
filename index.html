@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#0b0e14" />
   <title>Nova Skin Studio — MCPE Skin Creator</title>
-  <meta name="description" content="A mobile-first Minecraft Bedrock skin editor with precise pixels, brush tools, real 3D preview, animation, reference images and experimental geometry tools." />
+  <meta name="description" content="A mobile-first Minecraft Bedrock skin editor with 64×64 and 128×128 textures, precise pixel tools, freehand brushes, a live 3D preview, walking animation, reference images and experimental geometry." />
   <link rel="stylesheet" href="src/styles.css" />
 </head>
 <body>
@@ -31,7 +31,7 @@
       <button class="ghost-btn" id="newSkinBtn">New</button>
       <button class="ghost-btn" id="templateBtn">Template</button>
       <button class="ghost-btn" id="referenceBtn">Reference</button>
-      <button class="ghost-btn" id="importBtn">Import Skin</button>
+      <button class="ghost-btn" id="importBtn">Upload Skin</button>
       <button class="primary-btn" id="exportBtn">Download PNG</button>
       <input id="skinFileInput" type="file" accept="image/png,.png" hidden />
       <input id="referenceFileInput" type="file" accept="image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp" hidden />
@@ -60,7 +60,7 @@
         <div class="section-heading"><span>Brush</span></div>
         <div class="control-row">
           <label>Size <output id="brushSizeValue">1 px</output></label>
-          <input id="brushSize" type="range" min="1" max="8" value="1" step="1" />
+          <input id="brushSize" type="range" min="1" max="16" value="1" step="1" />
         </div>
         <div class="control-row">
           <label>Opacity <output id="brushOpacityValue">100%</output></label>
@@ -116,14 +116,22 @@
     </aside>
 
     <section class="center-stage">
+      <section class="upload-hero">
+        <div>
+          <div class="upload-hero-kicker">START WITH YOUR OWN SKIN</div>
+          <h1>Upload your skin and edit it with us.</h1>
+          <p>Bring a 64×64 or 128×128 Bedrock PNG and Nova will load it into the editor and 3D preview automatically.</p>
+        </div>
+        <button class="primary-btn hero-upload" id="uploadSkinHero">Upload Your Skin</button>
+      </section>
       <div class="stage-topline">
-        <div class="document-meta"><span class="status-dot"></span><strong id="docStatus">Complete Classic Starter</strong><span>•</span><span>64×64</span></div>
-        <div class="model-picker"><span>Model</span><select id="modelSelect"><option value="classic">Classic / Steve · 4px arms</option><option value="slim">Slim / Alex · 3px arms</option></select></div>
+        <div class="document-meta"><span class="status-dot"></span><strong id="docStatus">Complete Classic Starter</strong><span>•</span><span id="docSize">64×64</span></div>
+        <div class="model-picker"><label><span>Model</span><select id="modelSelect"><option value="classic">Classic / Steve · 4px arms</option><option value="slim">Slim / Alex · 3px arms</option></select></label><label><span>Texture</span><select id="textureSizeSelect"><option value="64">64×64</option><option value="128">128×128 HD</option></select></label></div>
         <div class="stage-actions"><button class="icon-btn" id="gridBtn">#</button><button class="icon-btn" id="checkerBtn">▦</button><button class="icon-btn" id="guideBtn">?</button></div>
       </div>
 
       <div class="editor-canvas-wrap" id="canvasWrap">
-        <canvas id="editorCanvas" aria-label="64 by 64 skin editor" width="900" height="900"></canvas>
+        <canvas id="editorCanvas" aria-label="Minecraft Bedrock skin editor" width="900" height="900"></canvas>
         <div class="reference-chip" id="referenceChip" hidden>REFERENCE LOADED</div>
         <div class="canvas-help">1 finger / mouse = paint • 2 fingers = pan + zoom • wheel = zoom • right-click = pick</div>
       </div>
@@ -145,7 +153,7 @@
 
       <section class="panel-section animation-panel">
         <div class="section-heading"><span>Animation</span><span class="live-pill" id="animationStatus">OFF</span></div>
-        <div class="control-row inline"><label>Pose</label><select id="animationSelect"><option value="idle">Idle</option><option value="walk">Walk</option><option value="mine">Mining</option></select></div>
+        <div class="control-row inline"><label>Pose</label><select id="animationSelect"><option value="none">No animation</option><option value="walk">Walking</option></select></div>
         <div class="sub-actions"><button class="mini-btn wide" id="animationToggle">Play</button><button class="mini-btn wide" id="animationReset">Reset pose</button></div>
         <div class="control-row"><label>Speed <output id="animationSpeedValue">1.0×</output></label><input id="animationSpeed" type="range" min="0.25" max="2" value="1" step="0.05"></div>
       </section>
@@ -157,13 +165,13 @@
 
       <section class="panel-section">
         <div class="section-heading"><span>Reference image</span><span class="micro-note">trace mode</span></div>
-        <p id="referenceText" class="section-copy">Upload a screenshot/photo to use as a translucent drawing reference. A valid 64×64 PNG should be imported with Import Skin so it stays game-accurate.</p>
+        <p id="referenceText" class="section-copy">Use this for screenshots, photos, concept art, or other images you want to trace. For a real Minecraft skin, use Upload Your Skin so the exact 64×64 or 128×128 PNG is loaded.</p>
         <div class="guide-actions"><button class="mini-btn" id="referenceButton2">Add image</button><button class="mini-btn" id="useReferenceAsSkinBtn">Use as skin</button></div>
       </section>
 
       <section class="panel-section geometry-panel">
         <div class="section-heading"><span>Custom geometry lab</span><span class="live-pill warning-pill">EXPERIMENTAL</span></div>
-        <p class="section-copy"><strong>4D / custom geometry is not a normal PNG skin.</strong> This preview lets you prototype an extra 3D box. The downloaded PNG does not contain this geometry.</p>
+        <p class="section-copy"><strong>Experimental custom geometry.</strong> This is a separate preview prototype, not part of a normal skin PNG. Exported PNGs do not contain the extra geometry, and compatibility with a given Minecraft workflow is not guaranteed.</p>
         <label class="toggle-row"><span>Show extra box</span><input id="geometryToggle" type="checkbox"><i></i></label>
         <div class="geometry-grid">
           <label>W<input id="geoW" type="number" min="0.5" max="16" step="0.5" value="4"></label>
@@ -181,7 +189,7 @@
 
       <section class="panel-section guide-section">
         <div class="section-heading"><span>Template guide</span></div>
-        <p class="section-copy">Think of the 64×64 PNG as a flat pattern that wraps around the character. The guide names each body part and face so you do not have to guess from color blocks.</p>
+        <p class="section-copy">Think of the texture as a flat pattern that wraps around the character. The guide now shows exact face coordinates instead of relying on tiny labels inside the map.</p>
         <div class="guide-actions"><button class="mini-btn" id="guideBtn2">Open guide</button><button class="mini-btn" id="downloadTemplateBtn">Download starter</button></div>
       </section>
     </aside>
@@ -189,18 +197,21 @@
 
   <div class="guide-modal" id="guideModal" hidden>
     <div class="guide-dialog" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
-      <header class="guide-dialog-top"><div><div class="guide-eyebrow">64×64 SKIN MAP</div><h2 id="guideTitle">Template guide</h2><p class="guide-lead">The texture is unfolded. The same head, body, arm and leg is split into top, bottom, left, front, right and back faces.</p></div><button class="icon-btn" id="closeGuideBtn">×</button></header>
+      <header class="guide-dialog-top"><div><div class="guide-eyebrow">TEXTURE MAP</div><h2 id="guideTitle">How the skin texture wraps around your character</h2><p class="guide-lead">This is not a picture of the character. It is the flattened surface of the 3D model. Each block below is one face of a body part.</p></div><button class="icon-btn" id="closeGuideBtn">×</button></header>
       <div class="guide-body">
         <div class="map-card"><canvas id="guideCanvas" width="768" height="768"></canvas></div>
         <div class="guide-copy">
+          <p id="guideSizeNote" class="guide-size-note"></p>
           <h3>How to read it</h3>
           <div class="guide-item"><b>TOP</b><span>The surface above the part.</span></div>
           <div class="guide-item"><b>FRONT</b><span>The side you normally see first.</span></div>
           <div class="guide-item"><b>BACK</b><span>The opposite side of FRONT.</span></div>
           <div class="guide-item"><b>LEFT / RIGHT</b><span>Character's left and right, not your screen's left and right.</span></div>
           <div class="guide-item"><b>BOTTOM</b><span>The underside.</span></div>
+          <h3>Exact face coordinates</h3>
+          <div id="guideRows" class="guide-map-rows"></div>
           <h3>Model difference</h3>
-          <p>Classic has wider arms; Slim has narrower arms. Nova uses a different 3D arm width for each model so the preview does not pretend they are the same.</p>
+          <p>Classic uses 4-pixel-wide arms. Slim uses 3-pixel-wide arms. In the editor, the model and texture map stay matched.</p>
           <h3>Best workflow</h3>
           <p>Start with Template → recolor → use Brush/Symmetry → orbit the 3D model → inspect the outer layer → export PNG.</p>
         </div>
