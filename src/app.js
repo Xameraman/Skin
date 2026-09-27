@@ -1,4 +1,5 @@
-const SIZE = 64;
+const BASE_SIZE = 64;
+const SUPPORTED_SIZES = [64, 128];
 const HISTORY_LIMIT = 100;
 const DEFAULT_COLOR = '#7FD7FF';
 
@@ -18,6 +19,8 @@ const els = {
   activeToolLabel: $('#activeToolLabel'),
   cursorReadout: $('#cursorReadout'),
   docStatus: $('#docStatus'),
+  docSize: $('#docSize'),
+  textureSizeSelect: $('#textureSizeSelect'),
   checks: $('#checks'),
   toastRegion: $('#toastRegion'),
   themeSelect: $('#themeSelect'),
@@ -48,12 +51,13 @@ const ctx = els.canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 
 const textureCanvas = document.createElement('canvas');
-textureCanvas.width = SIZE; textureCanvas.height = SIZE;
+textureCanvas.width = 64; textureCanvas.height = 64;
 const textureCtx = textureCanvas.getContext('2d', { willReadFrequently: true });
 textureCtx.imageSmoothingEnabled = false;
 
 const state = {
-  pixels: new Uint8ClampedArray(SIZE * SIZE * 4),
+  size: 64,
+  pixels: new Uint8ClampedArray(64 * 64 * 4),
   model: 'classic',
   tool: 'pencil',
   color: DEFAULT_COLOR,
@@ -96,13 +100,13 @@ function hexToRgba(hex, alpha = 255) {
   return [(n >>> 16) & 255, (n >>> 8) & 255, n & 255, alpha];
 }
 function rgbaToHex(r,g,b) { return [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('').toUpperCase(); }
-function indexFor(x,y){ return (y * SIZE + x) * 4; }
-function getPixel(x,y){ if(x<0||y<0||x>=SIZE||y>=SIZE) return [0,0,0,0]; const i=indexFor(x,y); return [state.pixels[i],state.pixels[i+1],state.pixels[i+2],state.pixels[i+3]]; }
+function indexFor(x,y){ return (y * state.size + x) * 4; }
+function getPixel(x,y){ if(x<0||y<0||x>=state.size||y>=state.size) return [0,0,0,0]; const i=indexFor(x,y); return [state.pixels[i],state.pixels[i+1],state.pixels[i+2],state.pixels[i+3]]; }
 function colorsEqual(a,b){ return a[0]===b[0]&&a[1]===b[1]&&a[2]===b[2]&&a[3]===b[3]; }
 function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
-function setPixel(x,y,rgba){ if(x<0||y<0||x>=SIZE||y>=SIZE)return false; const i=indexFor(x,y); if(colorsEqual([state.pixels[i],state.pixels[i+1],state.pixels[i+2],state.pixels[i+3]],rgba)) return false; state.pixels[i]=rgba[0]; state.pixels[i+1]=rgba[1]; state.pixels[i+2]=rgba[2]; state.pixels[i+3]=rgba[3]; return true; }
+function setPixel(x,y,rgba){ if(x<0||y<0||x>=state.size||y>=state.size)return false; const i=indexFor(x,y); if(colorsEqual([state.pixels[i],state.pixels[i+1],state.pixels[i+2],state.pixels[i+3]],rgba)) return false; state.pixels[i]=rgba[0]; state.pixels[i+1]=rgba[1]; state.pixels[i+2]=rgba[2]; state.pixels[i+3]=rgba[3]; return true; }
 function paintRect(x,y,w,h,hex,alpha=255){ const c=hexToRgba(hex,alpha); if(!c)return; for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)setPixel(xx,yy,c); }
-function pixelsToImageData(){ return new ImageData(new Uint8ClampedArray(state.pixels),SIZE,SIZE); }
+function pixelsToImageData(){ return new ImageData(new Uint8ClampedArray(state.pixels),state.size,state.size); }
 
 function setColor(hex, addRecent = true){
   const rgba=hexToRgba(hex); if(!rgba)return;
@@ -133,31 +137,61 @@ function layout(model = state.model){
   };
 }
 
+function scaledLayout(model = state.model) {
+  const base = layout(model);
+  const scale = state.size / BASE_SIZE;
+  const out = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (key === 'armW') { out.armW = value; continue; }
+    const regions = {};
+    for (const [face, r] of Object.entries(value.regions)) {
+      regions[face] = { x:r.x*scale, y:r.y*scale, w:r.w*scale, h:r.h*scale };
+    }
+    out[key] = { ...value, regions };
+  }
+  return out;
+}
+
+function setDocMeta(){
+  els.docStatus.textContent = state.title;
+  if (els.docSize) els.docSize.textContent = `${state.size}×${state.size}`;
+}
+
 function starterTemplate(model=state.model){
-  state.pixels.fill(0);
+  const oldSize = state.size;
+  state.size = 64;
+  state.pixels = new Uint8ClampedArray(64 * 64 * 4);
   const L=layout(model);
   const skin='#D8A177', skinShade='#B97654', hair='#3A2418', hairHi='#5B3827', shirt='#3F76B5', shirtHi='#6598CF', pants='#354250', pantsHi='#4A5A6B', shoes='#20252B';
   const pr=(r,c,a=255)=>paintRect(r.x,r.y,r.w,r.h,c,a);
-  // Head
   ['front','right'].forEach(k=>pr(L.head.regions[k],skin));
   ['left','bottom'].forEach(k=>pr(L.head.regions[k],skinShade));
   ['top','back'].forEach(k=>pr(L.head.regions[k],hair));
   paintRect(10,11,1,2,'#2B2020'); paintRect(13,11,1,2,'#2B2020'); paintRect(11,13,2,1,'#A85E54');
-  // Body
   ['front','right','back','bottom'].forEach(k=>pr(L.body.regions[k],shirt)); pr(L.body.regions.left,shirtHi); pr(L.body.regions.top,shirtHi);
-  // Arms
-  ['rightArm','leftArm'].forEach(k=>{const a=L[k];pr(a.regions.front,shirt);pr(a.regions.back,shirt);pr(a.regions.top,shirtHi);pr(a.regions.bottom,shirt);pr(a.regions.left,skin);pr(a.regions.right,skinShade);});
-  // Legs
-  ['rightLeg','leftLeg'].forEach(k=>{const leg=L[k];Object.keys(leg.regions).forEach(face=>pr(leg.regions[face],pants));pr(leg.regions.top,pantsHi);});
-  ['rightLeg','leftLeg'].forEach(k=>{const r=L[k].regions.front;paintRect(r.x,r.y+r.h-3,r.w,3,shoes); const l=L[k].regions.left;paintRect(l.x,l.y+l.h-3,l.w,3,shoes);});
-  // Outer layer: intentionally subtle, with hair and jacket panels.
+  ['rightArm','leftArm'].forEach(k=>{const a=L[k]; pr(a.regions.front,shirt); pr(a.regions.back,shirt); pr(a.regions.top,shirtHi); pr(a.regions.bottom,shirt); pr(a.regions.left,skin); pr(a.regions.right,skinShade);});
+  ['rightLeg','leftLeg'].forEach(k=>{const leg=L[k]; Object.keys(leg.regions).forEach(face=>pr(leg.regions[face],pants)); pr(leg.regions.top,pantsHi);});
+  ['rightLeg','leftLeg'].forEach(k=>{const r=L[k].regions.front; paintRect(r.x,r.y+r.h-3,r.w,3,shoes); const l=L[k].regions.left; paintRect(l.x,l.y+l.h-3,l.w,3,shoes);});
   ['top','back','left','right'].forEach(k=>pr(L.outerHead.regions[k],hairHi));
   pr(L.outerBody.regions.front,'#214E78',220); pr(L.outerBody.regions.left,'#1A415F',220); pr(L.outerBody.regions.right,'#17394F',220);
-  ['outerRightArm','outerLeftArm'].forEach(k=>{pr(L[k].regions.front,'#244F72',200);pr(L[k].regions.top,shirtHi,180);});
+  ['outerRightArm','outerLeftArm'].forEach(k=>{pr(L[k].regions.front,'#244F72',200); pr(L[k].regions.top,shirtHi,180);});
   ['outerRightLeg','outerLeftLeg'].forEach(k=>pr(L[k].regions.front,shoes,220));
-  state.title=model==='slim'?'Complete Slim Starter':'Complete Classic Starter';
-  els.docStatus.textContent=state.title;
+  const canonical = new Uint8ClampedArray(state.pixels);
+  state.size = oldSize;
+  state.pixels = new Uint8ClampedArray(oldSize * oldSize * 4);
+  if (oldSize === 64) state.pixels.set(canonical);
+  else { const scale = oldSize / 64; for(let y=0;y<oldSize;y++) for(let x=0;x<oldSize;x++){ const sx=Math.floor(x/scale), sy=Math.floor(y/scale), si=(sy*64+sx)*4, ni=(y*oldSize+x)*4; state.pixels[ni]=canonical[si]; state.pixels[ni+1]=canonical[si+1]; state.pixels[ni+2]=canonical[si+2]; state.pixels[ni+3]=canonical[si+3]; } }
+  state.title = oldSize===128 ? (model==='slim'?'Complete Slim HD Starter':'Complete Classic HD Starter') : (model==='slim'?'Complete Slim Starter':'Complete Classic Starter');
+  setDocMeta();
   state.history=[]; state.historyIndex=-1; saveHistory();
+}
+
+function resizeTexture(newSize){
+  if(!SUPPORTED_SIZES.includes(newSize) || newSize===state.size) return;
+  const oldSize=state.size, old=state.pixels, next=new Uint8ClampedArray(newSize*newSize*4);
+  if(newSize>oldSize){ const ratio=newSize/oldSize; for(let y=0;y<newSize;y++) for(let x=0;x<newSize;x++){ const sx=Math.floor(x/ratio), sy=Math.floor(y/ratio), si=(sy*oldSize+sx)*4, ni=(y*newSize+x)*4; next[ni]=old[si]; next[ni+1]=old[si+1]; next[ni+2]=old[si+2]; next[ni+3]=old[si+3]; } }
+  else { const ratio=oldSize/newSize; for(let y=0;y<newSize;y++) for(let x=0;x<newSize;x++){ const sx=Math.floor(x*ratio), sy=Math.floor(y*ratio), si=(sy*oldSize+sx)*4, ni=(y*newSize+x)*4; next[ni]=old[si]; next[ni+1]=old[si+1]; next[ni+2]=old[si+2]; next[ni+3]=old[si+3]; } }
+  state.size=newSize; state.pixels=next; state.zoom=1; state.panX=0; state.panY=0; setDocMeta(); state.history=[]; state.historyIndex=-1; saveHistory(); preview?.setModel(state.model); scheduleRender();
 }
 
 function saveHistory(){
@@ -169,7 +203,7 @@ function restoreHistory(i){ if(i<0||i>=state.history.length)return; state.pixels
 function undo(){restoreHistory(state.historyIndex-1);} function redo(){restoreHistory(state.historyIndex+1);}
 
 function blendPixel(x,y,color){
-  if(x<0||y<0||x>=SIZE||y>=SIZE)return false;
+  if(x<0||y<0||x>=state.size||y>=state.size)return false;
   const srcA=color[3]/255; if(srcA<=0)return false;
   const dst=getPixel(x,y); const dstA=dst[3]/255; const outA=srcA+dstA*(1-srcA);
   const out=[0,0,0,Math.round(outA*255)];
@@ -187,21 +221,21 @@ function brushPoints(cx,cy,size,shape){
 function applyBrush(x,y,erase=false){
   const baseColor=hexToRgba(state.color,Math.round(state.brushOpacity*255)); let changed=false;
   for(const [px,py] of brushPoints(x,y,state.brushSize,state.brushShape)){
-    if(state.mirror){ const pair=[[px,py],[SIZE-1-px,py]]; for(const [qx,qy] of pair) changed=(erase?setPixel(qx,qy,[0,0,0,0]):blendPixel(qx,qy,baseColor))||changed; }
+    if(state.mirror){ const pair=[[px,py],[state.size-1-px,py]]; for(const [qx,qy] of pair) changed=(erase?setPixel(qx,qy,[0,0,0,0]):blendPixel(qx,qy,baseColor))||changed; }
     else changed=(erase?setPixel(px,py,[0,0,0,0]):blendPixel(px,py,baseColor))||changed;
   }
   return changed;
 }
 function fillRegion(sx,sy,target,replacement){
-  if(colorsEqual(target,replacement))return false; const stack=[[sx,sy]],seen=new Uint8Array(SIZE*SIZE);let changed=false;
-  while(stack.length){const [x,y]=stack.pop();if(x<0||y<0||x>=SIZE||y>=SIZE)continue;const k=y*SIZE+x;if(seen[k])continue;seen[k]=1;const p=getPixel(x,y);if(!colorsEqual(p,target))continue;changed=setPixel(x,y,replacement)||changed;stack.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);}
+  if(colorsEqual(target,replacement))return false; const stack=[[sx,sy]],seen=new Uint8Array(state.size*state.size);let changed=false;
+  while(stack.length){const [x,y]=stack.pop();if(x<0||y<0||x>=state.size||y>=state.size)continue;const k=y*state.size+x;if(seen[k])continue;seen[k]=1;const p=getPixel(x,y);if(!colorsEqual(p,target))continue;changed=setPixel(x,y,replacement)||changed;stack.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);}
   return changed;
 }
 function linePixels(x0,y0,x1,y1){const out=[];let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,err=dx-dy;while(true){out.push([x0,y0]);if(x0===x1&&y0===y1)break;const e2=2*err;if(e2>-dy){err-=dy;x0+=sx;}if(e2<dx){err+=dx;y0+=sy;}}return out;}
 function circlePixels(x0,y0,x1,y1){const out=[];const cx=(x0+x1)/2,cy=(y0+y1)/2,rx=Math.abs(x1-x0)/2,ry=Math.abs(y1-y0)/2;const steps=Math.max(16,Math.ceil(2*Math.PI*Math.max(rx,ry)*2));for(let i=0;i<=steps;i++){const a=i/steps*Math.PI*2;const x=Math.round(cx+Math.cos(a)*rx),y=Math.round(cy+Math.sin(a)*ry);out.push([x,y]);}return [...new Map(out.map(p=>[p.join(','),p])).values()];}
 function applyShape(x0,y0,x1,y1,tool){let changed=false;const apply=(x,y)=>{if(state.tool==='eraser')changed=applyBrush(x,y,true)||changed;else changed=applyBrush(x,y,false)||changed;};const points=tool==='line'?linePixels(x0,y0,x1,y1):tool==='circle'?circlePixels(x0,y0,x1,y1):null;if(points){points.forEach(([x,y])=>apply(x,y));return changed;}const minX=Math.min(x0,x1),maxX=Math.max(x0,x1),minY=Math.min(y0,y1),maxY=Math.max(y0,y1);for(let x=minX;x<=maxX;x++){apply(x,minY);apply(x,maxY);}for(let y=minY;y<=maxY;y++){apply(minX,y);apply(maxX,y);}return changed;}
 function adjustShade(p,mode){const f=mode==='lighten'?1.18:.82;return [clamp(Math.round(p[0]*f),0,255),clamp(Math.round(p[1]*f),0,255),clamp(Math.round(p[2]*f),0,255),p[3]];}
-function replaceColor(startX,startY){const target=getPixel(startX,startY);const replacement=hexToRgba(state.color,Math.round(state.brushOpacity*255));const tol=state.replaceTolerance;let changed=false;for(let y=0;y<SIZE;y++)for(let x=0;x<SIZE;x++){const p=getPixel(x,y);const d=Math.max(Math.abs(p[0]-target[0]),Math.abs(p[1]-target[1]),Math.abs(p[2]-target[2]),Math.abs(p[3]-target[3]));if(d<=tol)changed=setPixel(x,y,replacement)||changed;}return changed;}
+function replaceColor(startX,startY){const target=getPixel(startX,startY);const replacement=hexToRgba(state.color,Math.round(state.brushOpacity*255));const tol=state.replaceTolerance;let changed=false;for(let y=0;y<state.size;y++)for(let x=0;x<state.size;x++){const p=getPixel(x,y);const d=Math.max(Math.abs(p[0]-target[0]),Math.abs(p[1]-target[1]),Math.abs(p[2]-target[2]),Math.abs(p[3]-target[3]));if(d<=tol)changed=setPixel(x,y,replacement)||changed;}return changed;}
 
 function toolAtPixel(x,y){
   if(state.tool==='picker'){const p=getPixel(x,y);if(p[3]>0)setColor('#'+rgbaToHex(p[0],p[1],p[2]));return false;}
@@ -212,17 +246,17 @@ function toolAtPixel(x,y){
   return applyBrush(x,y,false);
 }
 
-function getFitPixelSize(){const r=els.canvas.getBoundingClientRect();return Math.max(1,(Math.min(r.width,r.height)*.82)/SIZE);}
-function textureToCanvasPoint(x,y){const r=els.canvas.getBoundingClientRect();const fit=getFitPixelSize();const px=fit*state.zoom;return {x:r.width/2+state.panX+(x-SIZE/2)*px,y:r.height/2+state.panY+(y-SIZE/2)*px};}
-function eventToPixel(e){const r=els.canvas.getBoundingClientRect();const fit=getFitPixelSize();const px=fit*state.zoom;let x=((e.clientX-r.left)-(r.width/2+state.panX))/px+SIZE/2;let y=((e.clientY-r.top)-(r.height/2+state.panY))/px+SIZE/2;return {x:Math.floor(x),y:Math.floor(y)};}
+function getFitPixelSize(){const r=els.canvas.getBoundingClientRect();return Math.max(1,(Math.min(r.width,r.height)*.82)/state.size);}
+function textureToCanvasPoint(x,y){const r=els.canvas.getBoundingClientRect();const fit=getFitPixelSize();const px=fit*state.zoom;return {x:r.width/2+state.panX+(x-state.size/2)*px,y:r.height/2+state.panY+(y-state.size/2)*px};}
+function eventToPixel(e){const r=els.canvas.getBoundingClientRect();const fit=getFitPixelSize();const px=fit*state.zoom;let x=((e.clientX-r.left)-(r.width/2+state.panX))/px+state.size/2;let y=((e.clientY-r.top)-(r.height/2+state.panY))/px+state.size/2;return {x:Math.floor(x),y:Math.floor(y)};}
 function pointInCanvas(e){const r=els.canvas.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top};}
-function clampPan(){const r=els.canvas.getBoundingClientRect();const fit=getFitPixelSize();const px=fit*state.zoom;const texW=SIZE*px;const maxX=Math.max(0,(texW-r.width)/2+px*2);const maxY=Math.max(0,(texW-r.height)/2+px*2);state.panX=clamp(state.panX,-maxX,maxX);state.panY=clamp(state.panY,-maxY,maxY);}
-function zoomAt(localX,localY,newZoom){const r=els.canvas.getBoundingClientRect();const oldPx=getFitPixelSize()*state.zoom;const oldTx=(localX-(r.width/2+state.panX))/oldPx+SIZE/2;const oldTy=(localY-(r.height/2+state.panY))/oldPx+SIZE/2;state.zoom=clamp(newZoom,.35,12);const newPx=getFitPixelSize()*state.zoom;state.panX=localX-r.width/2-(oldTx-SIZE/2)*newPx;state.panY=localY-r.height/2-(oldTy-SIZE/2)*newPx;clampPan();scheduleRender();}
+function clampPan(){const r=els.canvas.getBoundingClientRect();const fit=getFitPixelSize();const px=fit*state.zoom;const texW=state.size*px;const maxX=Math.max(0,(texW-r.width)/2+px*2);const maxY=Math.max(0,(texW-r.height)/2+px*2);state.panX=clamp(state.panX,-maxX,maxX);state.panY=clamp(state.panY,-maxY,maxY);}
+function zoomAt(localX,localY,newZoom){const r=els.canvas.getBoundingClientRect();const oldPx=getFitPixelSize()*state.zoom;const oldTx=(localX-(r.width/2+state.panX))/oldPx+state.size/2;const oldTy=(localY-(r.height/2+state.panY))/oldPx+state.size/2;state.zoom=clamp(newZoom,.35,12);const newPx=getFitPixelSize()*state.zoom;state.panX=localX-r.width/2-(oldTx-state.size/2)*newPx;state.panY=localY-r.height/2-(oldTy-state.size/2)*newPx;clampPan();scheduleRender();}
 function fitCanvas(){state.zoom=1;state.panX=0;state.panY=0;scheduleRender();}
 function resetCenter(){state.panX=0;state.panY=0;scheduleRender();}
 
 function drawChecker(target,w,h,cell){target.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--bg-2').trim()||'#0d1118';target.fillRect(0,0,w,h);target.fillStyle='rgba(120,130,145,.09)';for(let y=0;y<h;y+=cell)for(let x=0;x<w;x+=cell)if(((x/cell+y/cell)&1)===0)target.fillRect(x,y,cell,cell);}
-function drawReference(){if(!state.reference||!state.referenceVisible)return;const r=els.canvas.getBoundingClientRect();const x=r.width/2+state.panX,y=r.height/2+state.panY,size=getFitPixelSize()*state.zoom*SIZE;ctx.save();ctx.globalAlpha=state.referenceOpacity;ctx.imageSmoothingEnabled=true;const ratio=state.reference.width/state.reference.height;let dw=size,dh=size;if(ratio>1)dh=size/ratio;else dw=size*ratio;ctx.drawImage(state.reference,x-dw/2,y-dh/2,dw,dh);ctx.restore();}
+function drawReference(){if(!state.reference||!state.referenceVisible)return;const r=els.canvas.getBoundingClientRect();const x=r.width/2+state.panX,y=r.height/2+state.panY,size=getFitPixelSize()*state.zoom*state.size;ctx.save();ctx.globalAlpha=state.referenceOpacity;ctx.imageSmoothingEnabled=true;const ratio=state.reference.width/state.reference.height;let dw=size,dh=size;if(ratio>1)dh=size/ratio;else dw=size*ratio;ctx.drawImage(state.reference,x-dw/2,y-dh/2,dw,dh);ctx.restore();}
 function renderEditor(){
   const r=els.canvas.getBoundingClientRect();const dpr=Math.min(window.devicePixelRatio||1,2);const w=Math.max(320,Math.round(r.width*dpr)),h=Math.max(320,Math.round(r.height*dpr));
   if(els.canvas.width!==w||els.canvas.height!==h){els.canvas.width=w;els.canvas.height=h;}
@@ -230,13 +264,13 @@ function renderEditor(){
   if(state.checker)drawChecker(ctx,r.width,r.height,16);else{ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()||'#080b10';ctx.fillRect(0,0,r.width,r.height);}
   drawReference();
   textureCtx.putImageData(pixelsToImageData(),0,0);
-  const fit=getFitPixelSize(),px=fit*state.zoom, size=SIZE*px;const ox=r.width/2+state.panX-size/2,oy=r.height/2+state.panY-size/2;
+  const fit=getFitPixelSize(),px=fit*state.zoom, size=state.size*px;const ox=r.width/2+state.panX-size/2,oy=r.height/2+state.panY-size/2;
   ctx.save();ctx.imageSmoothingEnabled=false;ctx.drawImage(textureCanvas,ox,oy,size,size);
-  if(state.grid&&px>=5){ctx.globalAlpha=Math.min(.26,.06+(px-5)*.015);ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted').trim()||'#87919e';ctx.lineWidth=1;ctx.beginPath();for(let i=0;i<=SIZE;i++){const gx=ox+i*px+.5;ctx.moveTo(gx,oy);ctx.lineTo(gx,oy+size);const gy=oy+i*px+.5;ctx.moveTo(ox,gy);ctx.lineTo(ox+size,gy);}ctx.stroke();}
+  if(state.grid&&px>=5){ctx.globalAlpha=Math.min(.26,.06+(px-5)*.015);ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted').trim()||'#87919e';ctx.lineWidth=1;ctx.beginPath();for(let i=0;i<=state.size;i++){const gx=ox+i*px+.5;ctx.moveTo(gx,oy);ctx.lineTo(gx,oy+size);const gy=oy+i*px+.5;ctx.moveTo(ox,gy);ctx.lineTo(ox+size,gy);}ctx.stroke();}
   ctx.strokeStyle='rgba(255,255,255,.18)';ctx.lineWidth=1;ctx.strokeRect(ox+.5,oy+.5,size-1,size-1);ctx.restore();
   els.zoomReadout.textContent=`${Math.round(state.zoom*100)}%`;
 }
-function scheduleRender(){if(editorFrame)return;editorFrame=requestAnimationFrame(()=>{editorFrame=0;renderEditor();renderPalettes();renderChecks();if(preview)preview.update(state.pixels,state.outer);});}
+function scheduleRender(){if(editorFrame)return;editorFrame=requestAnimationFrame(()=>{editorFrame=0;renderEditor();renderPalettes();renderChecks();if(preview)preview.update(state.pixels,state.size,state.outer);});}
 
 function renderPalettes(){
   els.swatches.innerHTML=state.recentColors.map(c=>`<button class="swatch" style="background:${c}" data-color="${c}" title="${c}"></button>`).join('');
@@ -289,26 +323,70 @@ function editorWheel(e){e.preventDefault();const local=pointInCanvas(e);const fa
 function loadReference(file){
   if(!file)return;const img=new Image();img.onload=()=>{state.reference=img;state.referenceVisible=true;els.referenceToggle.checked=true;els.referenceChip.hidden=false;els.referenceText.textContent=`Reference: ${file.name} (${img.width}×${img.height}). It stays behind your texture and does not change the exported PNG.`;URL.revokeObjectURL(img.src);scheduleRender();toast('Reference image loaded.');};img.onerror=()=>{toast('Could not read that image.');URL.revokeObjectURL(img.src);};img.src=URL.createObjectURL(file);
 }
+function loadReference(file){
+  if(!file)return;
+  const img=new Image();
+  img.onload=()=>{
+    state.reference=img; state.referenceVisible=true; els.referenceToggle.checked=true; els.referenceChip.hidden=false;
+    els.referenceText.textContent=`Reference loaded: ${file.name} (${img.width}×${img.height}). It stays behind the editor and is never exported.`;
+    URL.revokeObjectURL(img.src); scheduleRender(); toast('Reference image loaded.');
+  };
+  img.onerror=()=>{toast('Could not read that image.');URL.revokeObjectURL(img.src);};
+  img.src=URL.createObjectURL(file);
+}
 function importSkin(file){
-  if(!file)return;const img=new Image();img.onload=()=>{if(img.width!==64||img.height!==64){toast(`That image is ${img.width}×${img.height}. Import Skin needs an exact 64×64 texture; use Reference for screenshots/photos.`);loadReference(file);return;}const c=document.createElement('canvas');c.width=64;c.height=64;const cctx=c.getContext('2d',{willReadFrequently:true});cctx.imageSmoothingEnabled=false;cctx.drawImage(img,0,0);state.pixels.set(cctx.getImageData(0,0,64,64).data);state.title=file.name.replace(/\.png$/i,'')||'Imported skin';els.docStatus.textContent=state.title;state.history=[];state.historyIndex=-1;saveHistory();scheduleRender();toast('Skin imported. The 3D preview now uses this texture.');URL.revokeObjectURL(img.src);};img.onerror=()=>{toast('Could not read that PNG.');URL.revokeObjectURL(img.src);};img.src=URL.createObjectURL(file);
+  if(!file)return;
+  const img=new Image();
+  img.onload=()=>{
+    if(!SUPPORTED_SIZES.includes(img.width) || img.height!==img.width){
+      loadReference(file);
+      toast(`${img.width}×${img.height} is not a supported skin size. It was loaded as a reference.`);
+      URL.revokeObjectURL(img.src); return;
+    }
+    state.size=img.width;
+    const c=document.createElement('canvas'); c.width=state.size; c.height=state.size;
+    const cctx=c.getContext('2d',{willReadFrequently:true}); cctx.imageSmoothingEnabled=false; cctx.drawImage(img,0,0);
+    state.pixels=new Uint8ClampedArray(cctx.getImageData(0,0,state.size,state.size).data);
+    state.title=(file.name||'Imported skin').replace(/\.png$/i,'') || 'Imported skin';
+    els.textureSizeSelect.value=String(state.size); state.zoom=1; state.panX=0; state.panY=0; setDocMeta();
+    state.history=[]; state.historyIndex=-1; saveHistory();
+    preview?.setModel(state.model); scheduleRender();
+    toast(`${state.size}×${state.size} skin imported — preview updated automatically.`);
+    URL.revokeObjectURL(img.src);
+  };
+  img.onerror=()=>{toast('Could not read that PNG.');URL.revokeObjectURL(img.src);};
+  img.src=URL.createObjectURL(file);
 }
 function useReferenceAsSkin(){
-  if(!state.reference)return toast('Add a reference image first.');
-  if(state.reference.width!==64||state.reference.height!==64)return toast('That image is not 64×64, so it would not be a reliable Minecraft skin texture. Trace it or import the actual 64×64 PNG instead.');
-  const c=document.createElement('canvas');c.width=64;c.height=64;const cctx=c.getContext('2d');cctx.drawImage(state.reference,0,0);state.pixels.set(cctx.getImageData(0,0,64,64).data);state.title='Reference skin';els.docStatus.textContent=state.title;state.history=[];state.historyIndex=-1;saveHistory();scheduleRender();toast('Reference copied into the editable skin.');
+  if(!state.reference) return toast('Add a reference image first.');
+  if(!SUPPORTED_SIZES.includes(state.reference.width) || state.reference.width!==state.reference.height) return toast('Only 64×64 or 128×128 images can become a game-ready skin.');
+  state.size=state.reference.width;
+  const c=document.createElement('canvas'); c.width=state.size; c.height=state.size; const cctx=c.getContext('2d'); cctx.imageSmoothingEnabled=false; cctx.drawImage(state.reference,0,0);
+  state.pixels=new Uint8ClampedArray(cctx.getImageData(0,0,state.size,state.size).data);
+  state.title='Reference skin'; els.textureSizeSelect.value=String(state.size); setDocMeta(); state.history=[]; state.historyIndex=-1; saveHistory(); preview?.setModel(state.model); scheduleRender(); toast('Reference copied into the editable skin.');
 }
-function clearReference(){state.reference=null;state.referenceVisible=false;els.referenceToggle.checked=false;els.referenceChip.hidden=true;els.referenceText.textContent='Upload a screenshot/photo to use as a translucent drawing reference. A valid 64×64 PNG should be imported with Import Skin so it stays game-accurate.';scheduleRender();}
-
-function exportPng(){const out=document.createElement('canvas');out.width=64;out.height=64;out.getContext('2d').putImageData(pixelsToImageData(),0,0);out.toBlob(blob=>{const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`${slugify(state.title||'nova-skin')}.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG exported.');},'image/png');}
-function exportPixelsPng(pixels,filename){const out=document.createElement('canvas');out.width=64;out.height=64;out.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(pixels),64,64),0,0);out.toBlob(blob=>{const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);},'image/png');}
-function downloadStarter(){const current=new Uint8ClampedArray(state.pixels);const h=state.history.map(s=>new Uint8ClampedArray(s));const hi=state.historyIndex;const t=state.title;starterTemplate(state.model);const p=new Uint8ClampedArray(state.pixels);state.pixels.set(current);state.history=h;state.historyIndex=hi;state.title=t;els.docStatus.textContent=t;exportPixelsPng(p,state.model==='slim'?'complete-slim-template.png':'complete-classic-template.png');scheduleRender();toast('Starter template downloaded.');}
+function clearReference(){state.reference=null;state.referenceVisible=false;els.referenceToggle.checked=false;els.referenceChip.hidden=true;els.referenceText.textContent='Use Reference for screenshots/photos. Use Upload Your Skin for a real 64×64 or 128×128 skin PNG.';scheduleRender();}
+function exportPng(){const out=document.createElement('canvas');out.width=state.size;out.height=state.size;out.getContext('2d').putImageData(pixelsToImageData(),0,0);out.toBlob(blob=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${slugify(state.title||'nova-skin')}-${state.size}x${state.size}.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast(`${state.size}×${state.size} PNG exported.`);},'image/png');}
+function exportPixelsPng(pixels,size,filename){const out=document.createElement('canvas');out.width=size;out.height=size;out.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(pixels),size,size),0,0);out.toBlob(blob=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);},'image/png');}
+function downloadStarter(){const keepPixels=new Uint8ClampedArray(state.pixels),keepHistory=state.history.map(s=>new Uint8ClampedArray(s)),keepIndex=state.historyIndex,keepTitle=state.title;starterTemplate(state.model);const p=new Uint8ClampedArray(state.pixels);state.pixels.set(keepPixels);state.history=keepHistory;state.historyIndex=keepIndex;state.title=keepTitle;setDocMeta();exportPixelsPng(p,state.size,state.model==='slim'?`complete-slim-template-${state.size}.png`:`complete-classic-template-${state.size}.png`);scheduleRender();toast('Starter template downloaded.');}
 
 function renderGuide(){
-  const c=$('#guideCanvas'),g=c.getContext('2d');const s=c.width/64;g.clearRect(0,0,c.width,c.height);g.fillStyle='#0a0e14';g.fillRect(0,0,c.width,c.height);const L=layout(state.model);const parts=[['HEAD',L.head,'#73d4ff'],['BODY',L.body,'#9af0cf'],['R LEG',L.rightLeg,'#ffbf7b'],['R ARM',L.rightArm,'#b896ff'],['L LEG',L.leftLeg,'#ff7da0'],['L ARM',L.leftArm,'#ffe37a']];
-  for(const [name,part,color] of parts){for(const rect of Object.values(part.regions)){g.fillStyle=color+'16';g.strokeStyle=color;g.lineWidth=Math.max(1,s*.12);g.strokeRect(rect.x*s+.5,rect.y*s+.5,rect.w*s-1,rect.h*s-1);g.fillRect(rect.x*s,rect.y*s,rect.w*s,rect.h*s);}const xs=Object.values(part.regions).map(r=>r.x),ys=Object.values(part.regions).map(r=>r.y),xe=Object.values(part.regions).map(r=>r.x+r.w),ye=Object.values(part.regions).map(r=>r.y+r.h);const minx=Math.min(...xs),miny=Math.min(...ys),maxx=Math.max(...xe),maxy=Math.max(...ye);g.fillStyle=color;g.font=`700 ${Math.max(8,s*1.5)}px system-ui`;g.textAlign='center';g.textBaseline='middle';g.fillText(name,(minx+maxx)/2*s,(miny+maxy)/2*s);}
-  g.strokeStyle='rgba(255,255,255,.12)';g.lineWidth=1;g.strokeRect(.5,.5,c.width-1,c.height-1);
+  const c=$('#guideCanvas'),g=c.getContext('2d'),s=c.width/64; g.clearRect(0,0,c.width,c.height);
+  g.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--bg-2').trim()||'#0a0e14'; g.fillRect(0,0,c.width,c.height);
+  const L=layout(state.model), parts=[['HEAD',L.head,'#73d4ff'],['BODY',L.body,'#9af0cf'],['RIGHT LEG',L.rightLeg,'#ffbf7b'],['RIGHT ARM',L.rightArm,'#b896ff'],['LEFT LEG',L.leftLeg,'#ff7da0'],['LEFT ARM',L.leftArm,'#ffe37a']];
+  for(const [name,part,color] of parts){
+    const regs=Object.values(part.regions), minx=Math.min(...regs.map(r=>r.x)), miny=Math.min(...regs.map(r=>r.y)), maxx=Math.max(...regs.map(r=>r.x+r.w)), maxy=Math.max(...regs.map(r=>r.y+r.h));
+    for(const r of regs){g.fillStyle=color+'18';g.fillRect(r.x*s,r.y*s,r.w*s,r.h*s);g.strokeStyle=color;g.lineWidth=Math.max(1,s*.12);g.strokeRect(r.x*s+.5,r.y*s+.5,r.w*s-1,r.h*s-1);}
+    g.fillStyle=color;g.font=`700 ${Math.max(9,s*1.6)}px system-ui`;g.textAlign='center';g.textBaseline='middle';g.fillText(name,(minx+maxx)/2*s,(miny+maxy)/2*s);
+  }
+  g.fillStyle='rgba(255,255,255,.75)';g.font='600 9px system-ui';g.textAlign='left';g.textBaseline='top';g.fillText(`64×64 map • ${state.model==='slim'?'Slim / 3px arms':'Classic / 4px arms'}`,8,8);
 }
-function openGuide(){renderGuide();$('#guideModal').hidden=false;}function closeGuide(){$('#guideModal').hidden=true;}
+function guideRows(){
+  const L=layout(state.model), parts=[['Head',L.head],['Body',L.body],['Right leg',L.rightLeg],['Left leg',L.leftLeg],['Right arm',L.rightArm],['Left arm',L.leftArm]], order=['top','bottom','left','front','right','back'];
+  return parts.map(([name,part])=>`<div class="guide-map-row"><strong>${name}</strong><span>${order.map(face=>{const r=part.regions[face];return `<b>${face}</b> <code>${r.x},${r.y} · ${r.w}×${r.h}</code>`;}).join(' <i>•</i> ')}</span></div>`).join('');
+}
+function updateGuideCopy(){const box=$('#guideRows');if(box)box.innerHTML=guideRows();const sizeNote=$('#guideSizeNote');if(sizeNote)sizeNote.textContent=`The reference map uses 64×64 coordinates. At ${state.size}×${state.size}, every coordinate and face size is scaled ${state.size/64}×.`;}
+function openGuide(){renderGuide();updateGuideCopy();$('#guideModal').hidden=false;} function closeGuide(){$('#guideModal').hidden=true;}
 
 function setTool(tool){state.tool=tool;const labels={pencil:'Pencil',brush:'Brush',eraser:'Eraser',fill:'Fill',picker:'Eyedropper',line:'Line',rect:'Rectangle',circle:'Circle',shade:'Shade',replace:'Replace'};els.activeToolLabel.textContent=labels[tool]||tool;$$('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));}
 function slugify(v){return String(v).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'minecraft-skin';}
@@ -333,61 +411,39 @@ function mat4Rz(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([c,
 function mat4Perspective(fov,aspect,near,far){const f=1/Math.tan(fov/2),nf=1/(near-far),m=new Float32Array(16);m[0]=f/aspect;m[5]=f;m[10]=(far+near)*nf;m[11]=-1;m[14]=2*far*near*nf;return m;}
 function mat4LookAt(eye,center,up){let zx=eye[0]-center[0],zy=eye[1]-center[1],zz=eye[2]-center[2];let l=Math.hypot(zx,zy,zz);zx/=l;zy/=l;zz/=l;let xx=up[1]*zz-up[2]*zy,xy=up[2]*zx-up[0]*zz,xz=up[0]*zy-up[1]*zx;l=Math.hypot(xx,xy,xz);xx/=l;xy/=l;xz/=l;const yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;return new Float32Array([xx,yx,zx,0,xy,yy,zy,0,xz,yz,zz,0,-(xx*eye[0]+xy*eye[1]+xz*eye[2]),-(yx*eye[0]+yy*eye[1]+yz*eye[2]),-(zx*eye[0]+zy*eye[1]+zz*eye[2]),1]);}
 function addFace(data,p0,p1,p2,p3,uv,normal){const base=data.positions.length/3;[p0,p1,p2,p3].forEach(p=>data.positions.push(...p));const [u0,v0,u1,v1]=uv;data.uvs.push(u0,v1,u1,v1,u1,v0,u0,v0);for(let i=0;i<4;i++)data.normals.push(...normal);data.indices.push(base,base+1,base+2,base,base+2,base+3);}
-function uvRect(r){return [r.x/64,r.y/64,(r.x+r.w)/64,(r.y+r.h)/64];}
-function cubeMesh(size,uvs){const [w,h,d]=size,hx=w/2,hy=h/2,hz=d/2;const p={positions:[],uvs:[],normals:[],indices:[]};addFace(p,[-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz],uvRect(uvs.front),[0,0,1]);addFace(p,[hx,-hy,-hz],[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz],uvRect(uvs.back),[0,0,-1]);addFace(p,[hx,-hy,hz],[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz],uvRect(uvs.right),[1,0,0]);addFace(p,[-hx,-hy,-hz],[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz],uvRect(uvs.left),[-1,0,0]);addFace(p,[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz],[-hx,hy,-hz],uvRect(uvs.top),[0,1,0]);addFace(p,[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[-hx,-hy,hz],uvRect(uvs.bottom),[0,-1,0]);return p;}
+function uvRect(r,texSize){ const u0=r.x/texSize,u1=(r.x+r.w)/texSize,vTop=1-(r.y+r.h)/texSize,vBottom=1-r.y/texSize; return [u0,vTop,u1,vBottom]; }
+function cubeMesh(size,uvs,texSize=state.size){const [w,h,d]=size,hx=w/2,hy=h/2,hz=d/2;const p={positions:[],uvs:[],normals:[],indices:[]};addFace(p,[-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz],uvRect(uvs.front,texSize),[0,0,1]);addFace(p,[hx,-hy,-hz],[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz],uvRect(uvs.back,texSize),[0,0,-1]);addFace(p,[hx,-hy,hz],[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz],uvRect(uvs.right,texSize),[1,0,0]);addFace(p,[-hx,-hy,-hz],[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz],uvRect(uvs.left,texSize),[-1,0,0]);addFace(p,[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz],[-hx,hy,-hz],uvRect(uvs.top,texSize),[0,1,0]);addFace(p,[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[-hx,-hy,hz],uvRect(uvs.bottom,texSize),[0,-1,0]);return p;}
 function shader(gl,type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
 function programFor(gl){const vs=shader(gl,gl.VERTEX_SHADER,`attribute vec3 aPosition;attribute vec2 aUV;attribute vec3 aNormal;uniform mat4 uViewProj;uniform mat4 uModel;varying vec2 vUV;varying vec3 vNormal;void main(){vUV=aUV;vNormal=mat3(uModel)*aNormal;gl_Position=uViewProj*uModel*vec4(aPosition,1.0);}`);const fs=shader(gl,gl.FRAGMENT_SHADER,`precision mediump float;uniform sampler2D uTexture;uniform vec4 uColor;uniform bool uTextured;varying vec2 vUV;varying vec3 vNormal;void main(){vec4 base=uTextured?texture2D(uTexture,vUV):uColor;if(base.a<0.02)discard;vec3 light=normalize(vec3(.35,.85,.55));float shade=.68+.32*max(dot(normalize(vNormal),light),0.0);gl_FragColor=vec4(base.rgb*shade,base.a);}`);const p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p;}
 
 function makePreview(){
   const gl=els.previewCanvas.getContext('webgl',{alpha:false,antialias:false,powerPreference:'low-power'});
-  if(!gl)return {ready:false,modelName:'WebGL unavailable',update(){},renderNow(){},setModel(){},front(){},top(){},back(){},side(){},reset(){}};
-  let program;try{program=programFor(gl);}catch(err){console.error(err);return {ready:false,modelName:'Preview shader error',update(){},renderNow(){},setModel(){},front(){},top(){},back(){},side(){},reset(){}};}
+  if(!gl) return {ready:false,modelName:'WebGL unavailable',update(){},renderNow(){},setModel(){},front(){},top(){},back(){},side(){},reset(){},fit(){},togglePlay(){},setPose(){},setSpeed(){}};
+  let program; try{program=programFor(gl);}catch(err){console.error(err);return{ready:false,modelName:'Preview shader error',update(){},renderNow(){},setModel(){},front(){},top(){},back(){},side(){},reset(){},fit(){},togglePlay(){},setPose(){},setSpeed(){}};}
   const loc={pos:gl.getAttribLocation(program,'aPosition'),uv:gl.getAttribLocation(program,'aUV'),normal:gl.getAttribLocation(program,'aNormal'),vp:gl.getUniformLocation(program,'uViewProj'),model:gl.getUniformLocation(program,'uModel'),texture:gl.getUniformLocation(program,'uTexture'),color:gl.getUniformLocation(program,'uColor'),textured:gl.getUniformLocation(program,'uTextured')};
-  const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
-  const skinCanvas=document.createElement('canvas');skinCanvas.width=64;skinCanvas.height=64;const skinCtx=skinCanvas.getContext('2d');skinCtx.imageSmoothingEnabled=false;
-  const meshes={};
-  const pv={ready:true,modelName:'Classic',yaw:.35,pitch:.12,zoom:1,drag:false,lastX:0,lastY:0,pointers:new Map(),pinch:null,animation:'idle',playing:false,speed:1,animTime:0,lastTime:0};
+  const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  const skinCanvas=document.createElement('canvas');let skinCtx=skinCanvas.getContext('2d');skinCtx.imageSmoothingEnabled=false;const meshes={};
+  const pv={ready:true,modelName:'Classic / Steve',yaw:0,pitch:0,zoom:1.02,drag:false,lastX:0,lastY:0,pointers:new Map(),pinch:null,animation:'none',playing:false,speed:1,animTime:0,lastTime:0};
+  function syncSkinCanvas(pixels,size){if(skinCanvas.width!==size||skinCanvas.height!==size){skinCanvas.width=size;skinCanvas.height=size;skinCtx=skinCanvas.getContext('2d');skinCtx.imageSmoothingEnabled=false;}skinCtx.putImageData(new ImageData(new Uint8ClampedArray(pixels),size,size),0,0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,skinCanvas);}
   function upload(name,mesh){const b={pos:gl.createBuffer(),uv:gl.createBuffer(),normal:gl.createBuffer(),idx:gl.createBuffer(),count:mesh.indices.length};gl.bindBuffer(gl.ARRAY_BUFFER,b.pos);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(mesh.positions),gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,b.uv);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(mesh.uvs),gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,b.normal);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(mesh.normals),gl.STATIC_DRAW);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,b.idx);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(mesh.indices),gl.STATIC_DRAW);meshes[name]=b;}
-  function build(model){const L=layout(model);const parts=[
-    ['head',[0,12,0],[8,8,8],L.head.regions,[0,0,0],'head'],
-    ['body',[0,2,0],[8,12,4],L.body.regions,[0,0,0],'body'],
-    ['rightLeg',[-2,-10,0],[4,12,4],L.rightLeg.regions,[-2,-16,0],'rightLeg'],
-    ['leftLeg',[2,-10,0],[4,12,4],L.leftLeg.regions,[2,-16,0],'leftLeg'],
-    ['rightArm',[-(4+L.armW/2),1.6,0],[L.armW,12,4],L.rightArm.regions,[-(4+L.armW/2),7.6,0],'rightArm'],
-    ['leftArm',[(4+L.armW/2),1.6,0],[L.armW,12,4],L.leftArm.regions,[(4+L.armW/2),7.6,0],'leftArm'],
-  ];
-  parts.forEach(p=>upload(p[0],cubeMesh(p[2],p[3])));
-  const outer=[['headOuter',[0,12,0],L.outerHead],['bodyOuter',[0,2,0],L.outerBody],['rightLegOuter',[-2,-10,0],L.outerRightLeg],['leftLegOuter',[2,-10,0],L.outerLeftLeg],['rightArmOuter',[-(4+L.armW/2),1.6,0],L.outerRightArm],['leftArmOuter',[(4+L.armW/2),1.6,0],L.outerLeftArm]];outer.forEach(p=>upload(p[0],cubeMesh([p[2].w,p[2].h,p[2].d],p[2].regions)));pv.modelName=model==='slim'?'Slim':'Classic';render();}
-  build(state.model);
-  function resize(){const dpr=Math.min(window.devicePixelRatio||1,1.5);const w=Math.max(240,Math.round(els.previewCanvas.clientWidth*dpr)),h=Math.max(240,Math.round(els.previewCanvas.clientHeight*dpr));if(els.previewCanvas.width!==w||els.previewCanvas.height!==h){els.previewCanvas.width=w;els.previewCanvas.height=h;gl.viewport(0,0,w,h);}}
-  function drawMesh(name,modelM,textured,color=[.3,.7,1,1]){const b=meshes[name];if(!b)return;gl.uniformMatrix4fv(loc.model,false,modelM);gl.uniform1i(loc.textured,textured?1:0);gl.uniform4fv(loc.color,new Float32Array(color));gl.bindBuffer(gl.ARRAY_BUFFER,b.pos);gl.enableVertexAttribArray(loc.pos);gl.vertexAttribPointer(loc.pos,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,b.uv);gl.enableVertexAttribArray(loc.uv);gl.vertexAttribPointer(loc.uv,2,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,b.normal);gl.enableVertexAttribArray(loc.normal);gl.vertexAttribPointer(loc.normal,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,b.idx);gl.drawElements(gl.TRIANGLES,b.count,gl.UNSIGNED_SHORT,0);}
-  function partMatrix(pos,pivot,rx=0,ry=0,rz=0){let m=mat4T(pos[0],pos[1],pos[2]);if(pivot){m=mat4Mul(mat4T(pivot[0],pivot[1],pivot[2]),mat4Mul(mat4Rx(rx),mat4Mul(mat4Ry(ry),mat4Mul(mat4Rz(rz),mat4T(pos[0]-pivot[0],pos[1]-pivot[1],pos[2]-pivot[2])))));}return m;}
-  function render(now=performance.now()){
-    resize();if(pv.playing){const dt=Math.min(.05,(now-pv.lastTime)/1000||0);pv.animTime+=dt*pv.speed;pv.lastTime=now;}
-    gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.clearColor(.035,.045,.06,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.useProgram(program);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(loc.texture,0);
-    const aspect=els.previewCanvas.width/els.previewCanvas.height;const pitch=clamp(pv.pitch,-1.1,1.1),dist=46/pv.zoom;const cp=Math.cos(pitch);const eye=[Math.sin(pv.yaw)*cp*dist,Math.sin(pitch)*dist+1,Math.cos(pv.yaw)*cp*dist];const vp=mat4Mul(mat4Perspective(34*Math.PI/180,aspect,.1,200),mat4LookAt(eye,[0,0,0],[0,1,0]));gl.uniformMatrix4fv(loc.vp,false,vp);
-    const t=pv.animTime,walk=Math.sin(t*6)*.55,idle=Math.sin(t*1.8)*.035;let armR=idle,armL=-idle,legR=idle,legL=-idle,headY=0,bodyX=0;
-    if(pv.animation==='walk'){armR=walk;armL=-walk;legR=-walk;legL=walk;bodyX=Math.sin(t*3)*.025;}
-    if(pv.animation==='mine'){armR=-Math.abs(Math.sin(t*5))*1.0;armL=-Math.abs(Math.sin(t*5+Math.PI*.2))*1.0;legR=.03;legL=-.03;headY=Math.sin(t*5)*.06;}
-    const parts=[['head',[0,12+headY,0],[0,0,0]],['body',[0,2,0],[bodyX,0,0]],['rightLeg',[-2,-10,0],[legR,0,0]],['leftLeg',[2,-10,0],[legL,0,0]],['rightArm',[-(4+layout(state.model).armW/2),1.6,0],[armR,0,0]],['leftArm',[(4+layout(state.model).armW/2),1.6,0],[armL,0,0]]];
-    const pivots={head:null,body:null,rightLeg:[-2,-4,0],leftLeg:[2,-4,0],rightArm:[-(4+layout(state.model).armW/2),7.6,0],leftArm:[(4+layout(state.model).armW/2),7.6,0]};
-    parts.forEach(([name,pos,rot])=>drawMesh(name,partMatrix(pos,pivots[name],rot[0],rot[1],rot[2]),true));
-    if(state.outer){const outerMap={head:'headOuter',body:'bodyOuter',rightLeg:'rightLegOuter',leftLeg:'leftLegOuter',rightArm:'rightArmOuter',leftArm:'leftArmOuter'};parts.forEach(([name,pos,rot])=>drawMesh(outerMap[name],partMatrix(pos,pivots[name],rot[0],rot[1],rot[2]),true));}
-    if(state.geometry.enabled){const g=state.geometry;let m=mat4Mul(mat4T(g.x,g.y,g.z),mat4Mul(mat4Rz(g.rz*Math.PI/180),mat4Mul(mat4Ry(g.ry*Math.PI/180),mat4Rx(g.rx*Math.PI/180))));const solidKey='__geometry';if(!meshes[solidKey])upload(solidKey,cubeMesh([g.w,g.h,g.d],{top:{x:0,y:0,w:1,h:1},bottom:{x:0,y:0,w:1,h:1},left:{x:0,y:0,w:1,h:1},front:{x:0,y:0,w:1,h:1},right:{x:0,y:0,w:1,h:1},back:{x:0,y:0,w:1,h:1}}));drawMesh(solidKey,m,false,[.42,.82,.98,.72]);}
-    if(pv.playing)requestAnimationFrame(render);
-  }
-  function update(pixels,outer){skinCtx.putImageData(new ImageData(new Uint8ClampedArray(pixels),64,64),0,0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,skinCanvas);state.outer=outer;render();}
+  function clearMeshes(){for(const k of Object.keys(meshes)){const m=meshes[k];gl.deleteBuffer(m.pos);gl.deleteBuffer(m.uv);gl.deleteBuffer(m.normal);gl.deleteBuffer(m.idx);delete meshes[k];}}
+  function build(model){clearMeshes();const C=layout(model),L=scaledLayout(model),armW=C.armW;const parts=[['head',[0,12,0],[8,8,8],L.head.regions],['body',[0,2,0],[8,12,4],L.body.regions],['rightLeg',[-2,-10,0],[4,12,4],L.rightLeg.regions],['leftLeg',[2,-10,0],[4,12,4],L.leftLeg.regions],['rightArm',[-(4+armW/2),1.6,0],[armW,12,4],L.rightArm.regions],['leftArm',[(4+armW/2),1.6,0],[armW,12,4],L.leftArm.regions]];parts.forEach(p=>upload(p[0],cubeMesh(p[2],p[3],state.size)));const outer=[['headOuter',[0,12,0],L.outerHead],['bodyOuter',[0,2,0],L.outerBody],['rightLegOuter',[-2,-10,0],L.outerRightLeg],['leftLegOuter',[2,-10,0],L.outerLeftLeg],['rightArmOuter',[-(4+armW/2),1.6,0],L.outerRightArm],['leftArmOuter',[(4+armW/2),1.6,0],L.outerLeftArm]];outer.forEach(p=>upload(p[0],cubeMesh([p[2].w,p[2].h,p[2].d],p[2].regions,state.size)));pv.modelName=model==='slim'?'Slim / Alex':'Classic / Steve';render();}
+  function resize(){const dpr=Math.min(window.devicePixelRatio||1,1.5),w=Math.max(240,Math.round(els.previewCanvas.clientWidth*dpr)),h=Math.max(240,Math.round(els.previewCanvas.clientHeight*dpr));if(els.previewCanvas.width!==w||els.previewCanvas.height!==h){els.previewCanvas.width=w;els.previewCanvas.height=h;}gl.viewport(0,0,els.previewCanvas.width,els.previewCanvas.height);}
+  function drawMesh(name,matrix,textured=true,color=[.35,.65,.9,1]){const b=meshes[name];if(!b)return;gl.uniformMatrix4fv(loc.model,false,matrix);gl.uniform1i(loc.textured,textured?1:0);gl.uniform4fv(loc.color,new Float32Array(color));gl.bindBuffer(gl.ARRAY_BUFFER,b.pos);gl.enableVertexAttribArray(loc.pos);gl.vertexAttribPointer(loc.pos,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,b.uv);gl.enableVertexAttribArray(loc.uv);gl.vertexAttribPointer(loc.uv,2,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,b.normal);gl.enableVertexAttribArray(loc.normal);gl.vertexAttribPointer(loc.normal,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,b.idx);gl.drawElements(gl.TRIANGLES,b.count,gl.UNSIGNED_SHORT,0);}
+  function partMatrix(pos,pivot,rx=0,ry=0,rz=0){let m=mat4T(pos[0],pos[1],pos[2]);if(pivot)m=mat4Mul(mat4T(pivot[0],pivot[1],pivot[2]),mat4Mul(mat4Rx(rx),mat4Mul(mat4Ry(ry),mat4Mul(mat4Rz(rz),mat4T(pos[0]-pivot[0],pos[1]-pivot[1],pos[2]-pivot[2])))));return m;}
+  function render(now=performance.now()){resize();if(pv.playing){const dt=Math.min(.05,(now-pv.lastTime)/1000||0);pv.animTime+=dt*pv.speed;pv.lastTime=now;}gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.clearColor(.022,.028,.04,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.useProgram(program);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(loc.texture,0);const aspect=els.previewCanvas.width/els.previewCanvas.height,pitch=clamp(pv.pitch,-1.3,1.3),dist=39/pv.zoom,cp=Math.cos(pitch),eye=[Math.sin(pv.yaw)*cp*dist,Math.sin(pitch)*dist+1,Math.cos(pv.yaw)*cp*dist],vp=mat4Mul(mat4Perspective(30*Math.PI/180,aspect,.1,180),mat4LookAt(eye,[0,0,0],[0,1,0]));gl.uniformMatrix4fv(loc.vp,false,vp);const t=pv.animTime,walk=Math.sin(t*5.2)*.5;let armR=0,armL=0,legR=0,legL=0,bob=0;if(pv.animation==='walk'){armR=walk;armL=-walk;legR=-walk;legL=walk;bob=Math.abs(Math.sin(t*10.4))*.18;}const armW=layout(state.model).armW,parts=[['head',[0,12+bob,0],[0,0,0]],['body',[0,2+bob,0],[0,0,0]],['rightLeg',[-2,-10,0],[legR,0,0]],['leftLeg',[2,-10,0],[legL,0,0]],['rightArm',[-(4+armW/2),1.6+bob,0],[armR,0,0]],['leftArm',[(4+armW/2),1.6+bob,0],[armL,0,0]]],pivots={head:null,body:null,rightLeg:[-2,-4,0],leftLeg:[2,-4,0],rightArm:[-(4+armW/2),7.6,0],leftArm:[(4+armW/2),7.6,0]};parts.forEach(([name,pos,rot])=>drawMesh(name,partMatrix(pos,pivots[name],rot[0],rot[1],rot[2]),true));if(state.outer){const om={head:'headOuter',body:'bodyOuter',rightLeg:'rightLegOuter',leftLeg:'leftLegOuter',rightArm:'rightArmOuter',leftArm:'leftArmOuter'};parts.forEach(([name,pos,rot])=>drawMesh(om[name],partMatrix(pos,pivots[name],rot[0],rot[1],rot[2]),true));}if(pv.playing)requestAnimationFrame(render);}
+  function update(pixels,size,outer){syncSkinCanvas(pixels,size);state.outer=outer;render();}
   function setModel(model){build(model);}
   function setPose(){pv.animation=els.animationSelect.value;}
-  function reset(){pv.yaw=.35;pv.pitch=.12;pv.zoom=1;pv.animTime=0;render();}
-  function front(){pv.yaw=0;pv.pitch=0;render();} function back(){pv.yaw=Math.PI;pv.pitch=0;render();} function top(){pv.yaw=0;pv.pitch=.85;render();} function side(){pv.yaw=Math.PI/2;pv.pitch=0;render();}
-  function fit(){pv.zoom=1;render();}
-  els.previewCanvas.addEventListener('pointerdown',e=>{els.previewCanvas.setPointerCapture?.(e.pointerId);pv.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pv.pointers.size===1){pv.drag=true;pv.lastX=e.clientX;pv.lastY=e.clientY;}else if(pv.pointers.size===2){pv.drag=false;const [a,b]=[...pv.pointers.values()];pv.pinch={dist:Math.hypot(a.x-b.x,a.y-b.y),zoom:pv.zoom};}});
-  els.previewCanvas.addEventListener('pointermove',e=>{if(pv.pointers.has(e.pointerId))pv.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pv.pointers.size>=2){const [a,b]=[...pv.pointers.values()];const d=Math.hypot(a.x-b.x,a.y-b.y);if(pv.pinch)pv.zoom=clamp(pv.pinch.zoom*(d/(pv.pinch.dist||1)),.65,1.8);render();return;}if(!pv.drag)return;pv.yaw+=(e.clientX-pv.lastX)*.012;pv.pitch=clamp(pv.pitch+(e.clientY-pv.lastY)*.012,-1.1,1.1);pv.lastX=e.clientX;pv.lastY=e.clientY;render();});
-  ['pointerup','pointercancel'].forEach(ev=>els.previewCanvas.addEventListener(ev,e=>{pv.pointers.delete(e.pointerId);if(pv.pointers.size<2)pv.pinch=null;pv.drag=false;}));
-  els.previewCanvas.addEventListener('wheel',e=>{e.preventDefault();pv.zoom=clamp(pv.zoom*(e.deltaY<0?1.1:.91),.65,1.8);render();},{passive:false});
-  function togglePlay(){pv.playing=!pv.playing;els.animationStatus.textContent=pv.playing?'ON':'OFF';els.animationToggle.textContent=pv.playing?'Pause':'Play';if(pv.playing){pv.lastTime=performance.now();requestAnimationFrame(render);}else render();}
-  return {ready:true,modelName:pv.modelName,update,setModel,front,top,back,side,reset,fit,renderNow:render,togglePlay,setPose, setSpeed(v){pv.speed=v;},get playing(){return pv.playing;}};
+  function reset(){pv.yaw=0;pv.pitch=0;pv.zoom=1.02;pv.animTime=0;pv.playing=false;pv.animation='none';els.animationSelect.value='none';els.animationStatus.textContent='OFF';els.animationToggle.textContent='Play';render();}
+  function front(){pv.yaw=0;pv.pitch=0;render();} function back(){pv.yaw=Math.PI;pv.pitch=0;render();} function top(){pv.yaw=0;pv.pitch=1.05;render();} function side(){pv.yaw=Math.PI/2;pv.pitch=0;render();} function fit(){pv.zoom=1.02;render();}
+  els.previewCanvas.addEventListener('pointerdown',e=>{els.previewCanvas.setPointerCapture?.(e.pointerId);pv.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pv.pointers.size===1){pv.drag=true;pv.lastX=e.clientX;pv.lastY=e.clientY;}else if(pv.pointers.size===2){pv.drag=false;const[a,b]=[...pv.pointers.values()];pv.pinch={dist:Math.hypot(a.x-b.x,a.y-b.y),zoom:pv.zoom};}});
+  els.previewCanvas.addEventListener('pointermove',e=>{if(pv.pointers.has(e.pointerId))pv.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pv.pointers.size>=2){const[a,b]=[...pv.pointers.values()],d=Math.hypot(a.x-b.x,a.y-b.y);if(pv.pinch)pv.zoom=clamp(pv.pinch.zoom*(d/(pv.pinch.dist||1)),.62,2.5);render();return;}if(!pv.drag)return;pv.yaw+=(e.clientX-pv.lastX)*.011;pv.pitch=clamp(pv.pitch+(e.clientY-pv.lastY)*.011,-1.3,1.3);pv.lastX=e.clientX;pv.lastY=e.clientY;render();});
+  ['pointerup','pointercancel','pointerleave'].forEach(ev=>els.previewCanvas.addEventListener(ev,e=>{pv.pointers.delete(e.pointerId);if(pv.pointers.size<2)pv.pinch=null;pv.drag=false;}));
+  els.previewCanvas.addEventListener('wheel',e=>{e.preventDefault();pv.zoom=clamp(pv.zoom*(e.deltaY<0?1.1:.91),.62,2.5);render();},{passive:false});
+  function togglePlay(){pv.playing=!pv.playing;els.animationStatus.textContent=pv.playing?'ON':'OFF';els.animationToggle.textContent=pv.playing?'Pause':'Play';if(pv.playing){pv.animation='walk';els.animationSelect.value='walk';pv.lastTime=performance.now();requestAnimationFrame(render);}else render();}
+  build(state.model);
+  return{ready:true,modelName:pv.modelName,update,setModel,front,top,back,side,reset,fit,renderNow:render,togglePlay,setPose,setSpeed(v){pv.speed=v;}};
 }
 
 function bind(){
@@ -398,7 +454,7 @@ function bind(){
   $('#gridToggle').addEventListener('change',e=>{state.grid=e.target.checked;scheduleRender();});
   $('#checkerToggle').addEventListener('change',e=>{state.checker=e.target.checked;scheduleRender();});
   $('#mirrorToggle').addEventListener('change',e=>state.mirror=e.target.checked);
-  els.outerToggle.addEventListener('change',()=>{state.outer=els.outerToggle.checked;preview?.update(state.pixels,state.outer);});
+  els.outerToggle.addEventListener('change',()=>{state.outer=els.outerToggle.checked;preview?.update(state.pixels,state.size,state.outer);});
   els.referenceToggle.addEventListener('change',()=>{state.referenceVisible=els.referenceToggle.checked;scheduleRender();});
   els.referenceOpacity.addEventListener('input',()=>{state.referenceOpacity=+els.referenceOpacity.value/100;els.referenceOpacityValue.textContent=`${els.referenceOpacity.value}%`;scheduleRender();});
   els.colorInput.addEventListener('input',e=>setColor(e.target.value));
@@ -408,7 +464,8 @@ function bind(){
   $('#gridBtn').addEventListener('click',()=>{$('#gridToggle').click();});$('#checkerBtn').addEventListener('click',()=>{$('#checkerToggle').click();});
   $('#newSkinBtn').addEventListener('click',()=>{if(confirm('Create a new starter skin? Unsaved changes will be replaced.')){starterTemplate(state.model);scheduleRender();toast('Starter skin loaded.');}});
   $('#templateBtn').addEventListener('click',()=>{starterTemplate(state.model);scheduleRender();toast('Complete editable template loaded.');});
-  $('#importBtn').addEventListener('click',()=>els.skinFileInput.click());els.skinFileInput.addEventListener('change',e=>{importSkin(e.target.files?.[0]);e.target.value='';});
+  $('#importBtn').addEventListener('click',()=>els.skinFileInput.click());
+  $('#uploadSkinHero').addEventListener('click',()=>els.skinFileInput.click());els.skinFileInput.addEventListener('change',e=>{importSkin(e.target.files?.[0]);e.target.value='';});
   $('#referenceBtn').addEventListener('click',()=>els.referenceFileInput.click());$('#referenceButton2').addEventListener('click',()=>els.referenceFileInput.click());els.referenceFileInput.addEventListener('change',e=>{loadReference(e.target.files?.[0]);e.target.value='';});
   $('#useReferenceAsSkinBtn').addEventListener('click',useReferenceAsSkin);$('#clearReferenceBtn').addEventListener('click',clearReference);
   $('#exportBtn').addEventListener('click',exportPng);$('#downloadTemplateBtn').addEventListener('click',downloadStarter);
@@ -417,7 +474,8 @@ function bind(){
   $('#clearHistoryBtn').addEventListener('click',()=>{state.recentColors=[DEFAULT_COLOR];renderPalettes();});
   els.canvas.addEventListener('pointerdown',editorPointerDown);els.canvas.addEventListener('pointermove',editorPointerMove);els.canvas.addEventListener('pointerup',editorPointerUp);els.canvas.addEventListener('pointercancel',editorPointerUp);els.canvas.addEventListener('wheel',editorWheel,{passive:false});els.canvas.addEventListener('contextmenu',e=>e.preventDefault());
   $('#frontBtn').addEventListener('click',()=>preview?.front());$('#topBtn').addEventListener('click',()=>preview?.top());$('#backBtn').addEventListener('click',()=>preview?.back());$('#sideBtn').addEventListener('click',()=>preview?.side());$('#resetViewBtn').addEventListener('click',()=>preview?.reset());$('#previewZoomFitBtn').addEventListener('click',()=>preview?.fit());
-  $('#animationSelect').addEventListener('change',()=>{preview?.setPose();if(!preview?.playing)preview?.renderNow();});$('#animationToggle').addEventListener('click',()=>preview?.togglePlay());$('#animationReset').addEventListener('click',()=>preview?.reset());els.animationSpeed.addEventListener('input',()=>{const v=+els.animationSpeed.value;els.animationSpeedValue.textContent=`${v.toFixed(2)}×`;preview?.setSpeed(v);});
+  $('#animationSelect').addEventListener('change',()=>{preview?.setPose();if(!preview?.playing)preview?.renderNow();});
+  els.textureSizeSelect?.addEventListener('change',()=>{resizeTexture(+els.textureSizeSelect.value);});$('#animationToggle').addEventListener('click',()=>preview?.togglePlay());$('#animationReset').addEventListener('click',()=>preview?.reset());els.animationSpeed.addEventListener('input',()=>{const v=+els.animationSpeed.value;els.animationSpeedValue.textContent=`${v.toFixed(2)}×`;preview?.setSpeed(v);});
   els.geometryToggle.addEventListener('change',()=>{state.geometry.enabled=els.geometryToggle.checked;readGeometryInputs();preview?.renderNow();});$$('.geometry-grid input').forEach(i=>i.addEventListener('input',()=>{readGeometryInputs();preview?.renderNow();}));$('#geoResetBtn').addEventListener('click',resetGeometry);$('#geoExportBtn').addEventListener('click',exportGeometryJSON);
   window.addEventListener('resize',()=>{renderEditor();preview?.renderNow();});
   window.addEventListener('keydown',e=>{const tag=(e.target?.tagName||'').toLowerCase();if(['input','textarea','select'].includes(tag))return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();undo();return;}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();redo();return;}const keys=['pencil','brush','eraser','fill','picker','line','rect','circle','shade','replace'];if(e.key>='1'&&e.key<='9')setTool(keys[+e.key-1]);if(e.key==='0')setTool('replace');if(e.key==='Escape')closeGuide();if(e.key.toLowerCase()==='f')fitCanvas();});
