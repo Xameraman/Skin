@@ -33,7 +33,8 @@
       <button class="ghost-btn" id="referenceBtn">Reference</button>
       <button class="ghost-btn" id="importBtn">Upload Skin</button>
       <button class="primary-btn" id="exportBtn">Download PNG</button>
-      <input id="skinFileInput" type="file" accept="image/png,.png" hidden />
+      <input id="skinFileInput" type="file" accept="image/png,.png,image/webp,.webp,image/jpeg,.jpg,.jpeg" hidden />
+      <input id="geometryFileInput" type="file" accept="application/json,.json,.geo.json" hidden />
       <input id="referenceFileInput" type="file" accept="image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp" hidden />
     </div>
   </header>
@@ -43,17 +44,18 @@
       <section class="panel-section">
         <div class="section-heading"><span>Draw</span><span class="micro-note">pixel-safe</span></div>
         <div class="tool-grid">
-          <button class="tool-btn active" data-tool="pencil" title="Pencil"><b>✎</b><span>Pencil</span></button>
-          <button class="tool-btn" data-tool="brush" title="Brush"><b>◌</b><span>Brush</span></button>
-          <button class="tool-btn" data-tool="eraser" title="Eraser"><b>⌫</b><span>Eraser</span></button>
-          <button class="tool-btn" data-tool="fill" title="Fill"><b>▧</b><span>Fill</span></button>
-          <button class="tool-btn" data-tool="picker" title="Eyedropper"><b>◉</b><span>Pick</span></button>
-          <button class="tool-btn" data-tool="line" title="Line"><b>╱</b><span>Line</span></button>
-          <button class="tool-btn" data-tool="rect" title="Rectangle"><b>□</b><span>Rect</span></button>
-          <button class="tool-btn" data-tool="circle" title="Circle"><b>○</b><span>Circle</span></button>
-          <button class="tool-btn" data-tool="shade" title="Shade"><b>☼</b><span>Shade</span></button>
-          <button class="tool-btn" data-tool="replace" title="Replace color"><b>↺</b><span>Replace</span></button>
+          <button class="tool-btn active" data-tool="pencil" title="Pencil — one precise pixel"><b>✎</b><span>Pencil</span></button>
+          <button class="tool-btn" data-tool="brush" title="Brush — freehand painting"><b>◌</b><span>Brush</span></button>
+          <button class="tool-btn" data-tool="eraser" title="Eraser — remove pixels"><b>⌫</b><span>Eraser</span></button>
+          <button class="tool-btn" data-tool="fill" title="Fill — replace a connected area"><b>▧</b><span>Fill</span></button>
+          <button class="tool-btn" data-tool="picker" title="Pick — sample a pixel color"><b>◉</b><span>Pick</span></button>
+          <button class="tool-btn" data-tool="line" title="Line — draw a straight pixel line"><b>╱</b><span>Line</span></button>
+          <button class="tool-btn" data-tool="rect" title="Rectangle — outline a box"><b>□</b><span>Rect</span></button>
+          <button class="tool-btn" data-tool="circle" title="Circle — pixel-art outline ellipse"><b>○</b><span>Circle</span></button>
+          <button class="tool-btn" data-tool="shade" title="Shade — lighten or darken existing pixels"><b>☼</b><span>Shade</span></button>
+          <button class="tool-btn" data-tool="replace" title="Replace — recolor matching pixels"><b>↺</b><span>Replace</span></button>
         </div>
+        <div class="tool-help" id="toolHelp"> <strong id="toolHelpTitle">Pencil</strong><span id="toolHelpText">Paint exactly one texture pixel. Hold and drag to draw a clean pixel line.</span><span class="tool-help-tip" id="toolHelpTip">Tip: use the grid when zoomed in.</span></div>
       </section>
 
       <section class="panel-section">
@@ -128,14 +130,34 @@
       </section>
       <div class="stage-topline">
         <div class="document-meta"><span class="status-dot"></span><strong id="docStatus">Complete Classic Starter</strong><span>•</span><span id="docSize">64×64</span></div>
-        <div class="model-picker"><label><span>Model</span><select id="modelSelect"><option value="classic">Classic / Steve · 4px arms</option><option value="slim">Slim / Alex · 3px arms</option></select></label><label><span>Texture</span><select id="textureSizeSelect"><option value="64">64×64</option><option value="128">128×128 HD</option></select></label></div>
+        <div class="model-picker"><label><span>Model</span><select id="modelSelect"><option value="classic">Classic / Steve · 4px arms</option><option value="slim">Slim / Alex · 3px arms</option></select></label><label><span>Texture</span><select id="textureSizeSelect"><option value="64">64×64</option><option value="128">128×128 HD</option><option value="custom">Custom / advanced</option></select></label></div>
         <div class="stage-actions"><button class="icon-btn" id="gridBtn">#</button><button class="icon-btn" id="checkerBtn">▦</button><button class="icon-btn" id="guideBtn">?</button></div>
       </div>
 
       <div class="editor-canvas-wrap" id="canvasWrap">
         <canvas id="editorCanvas" aria-label="Minecraft Bedrock skin editor" width="900" height="900"></canvas>
         <div class="reference-chip" id="referenceChip" hidden>REFERENCE LOADED</div>
-        <div class="canvas-help">1 finger / mouse = paint • 2 fingers = pan + zoom • wheel = zoom • right-click = pick</div>
+        <div class="focus-badge" id="focusBadge" hidden></div>
+        <div class="canvas-focus">
+          <button class="focus-toggle" id="focusToggleBtn" aria-expanded="false" aria-controls="focusMenu">🎯 Focus</button>
+          <div class="focus-menu" id="focusMenu" hidden>
+            <div class="focus-menu-head">
+              <div><strong>Quick Focus</strong><span>Jump straight to a part of the skin.</span></div>
+              <button class="focus-close" id="focusCloseBtn" aria-label="Close quick focus">×</button>
+            </div>
+            <div class="focus-common" id="focusCommon"></div>
+            <div class="focus-more-row">
+              <button class="mini-btn wide" id="focusMoreBtn" aria-expanded="false">More faces</button>
+              <button class="mini-btn wide" id="focusAllBtn">Whole texture</button>
+            </div>
+            <div class="focus-detail" id="focusDetail" hidden>
+              <div class="focus-part-row" id="focusPartRow"></div>
+              <div class="focus-face-row" id="focusFaceRow"></div>
+              <div class="focus-detail-note">The highlighted face is the exact 2D area you are about to edit.</div>
+            </div>
+          </div>
+        </div>
+        <div class="canvas-help">1 finger / mouse = paint • 2 fingers = pan + zoom • wheel = zoom • use Focus to jump to head/arms/legs</div>
       </div>
       <div class="bottom-toolbar">
         <div class="tool-context"><span class="context-label">Tool</span><strong id="activeToolLabel">Pencil</strong><span class="context-separator">•</span><span id="cursorReadout">X: — Y: —</span></div>
@@ -148,7 +170,7 @@
         <div class="section-heading"><span>3D preview</span><span class="live-pill">LIVE TEXTURE</span></div>
         <div class="preview-card" id="previewCard">
           <canvas id="previewCanvas" aria-label="3D Minecraft skin preview" width="420" height="500"></canvas>
-          <div class="preview-help">drag = orbit • wheel / pinch = zoom</div>
+          <div class="preview-help">drag = orbit • wheel / pinch = zoom • vertical drag = look up/down</div>
         </div>
         <div class="preview-controls"><button class="mini-btn" id="frontBtn">Front</button><button class="mini-btn" id="topBtn">Top</button><button class="mini-btn" id="backBtn">Back</button><button class="mini-btn" id="sideBtn">Side</button><button class="mini-btn" id="resetViewBtn">Reset</button><button class="mini-btn" id="previewZoomFitBtn">Fit</button></div>
       </section>
@@ -167,13 +189,19 @@
 
       <section class="panel-section">
         <div class="section-heading"><span>Reference image</span><span class="micro-note">trace mode</span></div>
-        <p id="referenceText" class="section-copy">Use this for screenshots, photos, concept art, or other images you want to trace. For a real Minecraft skin, use Upload Your Skin so the exact 64×64 or 128×128 PNG is loaded.</p>
+        <p id="referenceText" class="section-copy">Use screenshots, photos, concepts, or non-standard assets as a visual reference. A supported square texture can also be imported directly as your active editable skin.</p>
         <div class="guide-actions"><button class="mini-btn" id="referenceButton2">Add image</button><button class="mini-btn" id="useReferenceAsSkinBtn">Use as skin</button></div>
       </section>
 
       <section class="panel-section geometry-panel">
+        <div class="section-heading"><span>Custom skin assets</span><span class="live-pill warning-pill">ADVANCED</span></div>
+        <p class="section-copy">4D/5D is community terminology. Import any square PNG texture up to 1024×1024 for editing. If your skin came with a separate geometry JSON, you can load that too; the PNG itself does not contain the extra model data.</p>
+        <div class="guide-actions"><button class="mini-btn" id="advancedAssetBtn">Upload asset image</button><button class="mini-btn" id="geometryImportBtn">Load geometry JSON</button></div>
+      </section>
+
+      <section class="panel-section geometry-panel">
         <div class="section-heading"><span>5D / Custom geometry lab</span><span class="live-pill warning-pill">EXPERIMENTAL</span></div>
-        <p class="section-copy"><strong>5D is community terminology, not a standard PNG skin feature.</strong> This lab lets you preview an extra 3D box and export a Bedrock geometry prototype. A normal skin PNG does not contain extra geometry, and a standard skin-pack JSON cannot add arbitrary custom player models. Test the exported geometry only in a workflow that supports custom geometry.</p>
+        <p class="section-copy"><strong>Experimental geometry.</strong> You can place and rotate an extra box for planning a custom model. This is not guaranteed to work as a normal Bedrock player skin; official skin-pack JSON uses the built-in Steve/Alex geometries and does not add arbitrary player models.</p>
         <label class="toggle-row"><span>Show extra box</span><input id="geometryToggle" type="checkbox"><i></i></label>
         <div class="geometry-grid">
           <label>W<input id="geoW" type="number" min="0.5" max="16" step="0.5" value="4"></label>
@@ -214,8 +242,10 @@
           <div id="guideRows" class="guide-map-rows"></div>
           <h3>Model difference</h3>
           <p>Classic uses 4-pixel-wide arms. Slim uses 3-pixel-wide arms. In the editor, the model and texture map stay matched.</p>
+          <h3>Quick Focus</h3>
+          <p>Use the 🎯 Focus button on the canvas to jump directly to the head, top/back of the head, arms, legs, or any exact face. Nova zooms and centers that region for you.</p>
           <h3>Best workflow</h3>
-          <p>Start with Template → recolor → use Brush/Symmetry → orbit the 3D model → inspect the outer layer → export PNG.</p>
+          <p>Start with Template → pick a Focus area → paint → use the 3D preview to check it → inspect the outer layer → export PNG.</p>
         </div>
       </div>
     </div>
