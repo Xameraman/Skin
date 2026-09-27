@@ -1,5 +1,7 @@
 const BASE_SIZE = 64;
-const SUPPORTED_SIZES = [64, 128];
+const GAME_READY_SIZES = [64, 128];
+const MIN_EDITABLE_SIZE = 16;
+const MAX_EDITABLE_SIZE = 1024;
 const HISTORY_LIMIT = 80;
 const LIBRARY_LIMIT = 12;
 const DEFAULT_COLOR = '#7FD7FF';
@@ -24,6 +26,7 @@ const els = {
   animationStatus: $('#animationStatus'), animationSelect: $('#animationSelect'), animationSpeed: $('#animationSpeed'), animationSpeedValue: $('#animationSpeedValue'),
   modelSelect: $('#modelSelect'), outerToggle: $('#outerToggle'), referenceToggle: $('#referenceToggle'), geometryToggle: $('#geometryToggle'),
   libraryList: $('#libraryList'),
+  focusToggleBtn: $('#focusToggleBtn'), focusMenu: $('#focusMenu'), focusCommon: $('#focusCommon'), focusMoreBtn: $('#focusMoreBtn'), focusAllBtn: $('#focusAllBtn'), focusCloseBtn: $('#focusCloseBtn'), focusDetail: $('#focusDetail'), focusPartRow: $('#focusPartRow'), focusFaceRow: $('#focusFaceRow'), focusBadge: $('#focusBadge'),
 };
 
 const ctx = els.canvas.getContext('2d');
@@ -44,11 +47,25 @@ const state = {
   reference:null, referenceVisible:false, referenceOpacity:.35,
   activePointers:new Map(), drawing:false, strokeBefore:null, strokeChanged:false, dragStart:null, editorGesture:null,
   geometry:{enabled:false,w:4,h:4,d:4,x:0,y:4,z:0,rx:0,ry:0,rz:0,color:'#B68CFF'},
+  geometryAsset:null,
+  focusTarget:null,
 };
 
 let preview = null;
 let editorFrame = 0;
 let toastTimer = 0;
+const TOOL_INFO = {
+  pencil:{title:'Pencil',text:'Paint exactly one texture pixel. Drag to draw a crisp pixel line.',tip:'Best for eyes, outlines, tiny details, and precise corrections.'},
+  brush:{title:'Brush',text:'Paint several pixels at once. Size and shape control the area.',tip:'Start with 1–3 px for Minecraft-style shading.'},
+  eraser:{title:'Eraser',text:'Remove pixels and make them transparent. Brush size still applies.',tip:'Use a small size around eyes and clothing edges.'},
+  fill:{title:'Fill',text:'Fill one connected area that matches the color you clicked.',tip:'Great for large flat regions like shirts and pants.'},
+  picker:{title:'Pick',text:'Tap a pixel to copy its visible color into your color.',tip:'Right-click the canvas also picks a color.'},
+  line:{title:'Line',text:'Drag from one point to another to make a straight pixel-art line.',tip:'Release to commit the line.'},
+  rect:{title:'Rectangle',text:'Drag a box to draw a pixel-art outline.',tip:'Use Fill if you want the inside filled.'},
+  circle:{title:'Circle',text:'Drag a box to draw an outlined pixel ellipse.',tip:'Useful for eyes, badges, and rounded details.'},
+  shade:{title:'Light / Dark',text:'Changes the pixels you touch to be lighter or darker. It does not pick a new color.',tip:'Choose Lighten/Darken and use Brush Size to control the area.'},
+  replace:{title:'Replace Color',text:'Tap a color to recolor matching pixels across the texture.',tip:'Increase tolerance to include nearby shades.'}
+};
 
 function safeStorage(){ try { return window.localStorage; } catch { return null; } }
 const store = safeStorage();
@@ -99,7 +116,7 @@ function scaledLayout(model=state.model){
     out[k]={...v,regions};
   } return out;
 }
-function setDocMeta(){els.docStatus.textContent=state.title;els.docSize.textContent=`${state.size}×${state.size}`;els.textureSizeSelect.value=String(state.size);}
+function setDocMeta(){els.docStatus.textContent=state.title;els.docSize.textContent=`${state.size}×${state.size}`;if(els.textureSizeSelect)els.textureSizeSelect.value=(state.size===64||state.size===128)?String(state.size):'custom';}
 
 function paintRect(r,c,alpha=255){const rgba=hexToRgba(c,alpha);if(!rgba)return;for(let y=r.y;y<r.y+r.h;y++)for(let x=r.x;x<r.x+r.w;x++)setPixel(Math.floor(x),Math.floor(y),rgba);}
 function createStarterPixels(model=state.model,size=64){
@@ -141,9 +158,10 @@ function toolAt(x,y){
   if(x<0||y<0||x>=state.size||y>=state.size)return false;
   if(state.tool==='picker'){const p=getPixel(x,y);if(p[3])setColor('#'+rgbaToHex(p[0],p[1],p[2]));return false;}
   if(state.tool==='fill')return fillRegion(x,y,getPixel(x,y),hexToRgba(state.color,Math.round(state.brushOpacity*255)));
-  if(state.tool==='shade')return setPixel(x,y,adjustShade(getPixel(x,y)));
   if(state.tool==='replace')return replaceColor(x,y);
+  if(state.tool==='shade'){let changed=false;for(const [px,py] of brushPixels(x,y)){const c=adjustShade(getPixel(px,py));if(setPixel(px,py,c))changed=true;if(state.mirror){if(setPixel(state.size-1-px,py,c))changed=true;}}return changed;}
   if(state.tool==='eraser')return applyBrush(x,y,true);
+  if(state.tool==='pencil'){const c=hexToRgba(state.color,Math.round(state.brushOpacity*255));if(!c)return false;let changed=setPixel(x,y,blend(c,getPixel(x,y)));if(state.mirror)changed=setPixel(state.size-1-x,y,c)||changed;return changed;}
   return applyBrush(x,y,false);
 }
 
@@ -151,8 +169,68 @@ function fitPixelSize(){const r=els.canvas.getBoundingClientRect();return Math.m
 function eventToPixel(e){const r=els.canvas.getBoundingClientRect(),px=fitPixelSize()*state.zoom;return {x:Math.floor(((e.clientX-r.left)-(r.width/2+state.panX))/px+state.size/2),y:Math.floor(((e.clientY-r.top)-(r.height/2+state.panY))/px+state.size/2)};}
 function localPoint(e){const r=els.canvas.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top};}
 function clampPan(){const r=els.canvas.getBoundingClientRect(),px=fitPixelSize()*state.zoom,tex=state.size*px,max=Math.max(0,(tex-Math.min(r.width,r.height))/2+px*2);state.panX=clamp(state.panX,-max,max);state.panY=clamp(state.panY,-max,max);}
-function zoomAt(localX,localY,newZoom){const r=els.canvas.getBoundingClientRect(),oldPx=fitPixelSize()*state.zoom;const tx=(localX-(r.width/2+state.panX))/oldPx+state.size/2,ty=(localY-(r.height/2+state.panY))/oldPx+state.size/2;state.zoom=clamp(newZoom,.35,14);const npx=fitPixelSize()*state.zoom;state.panX=localX-r.width/2-(tx-state.size/2)*npx;state.panY=localY-r.height/2-(ty-state.size/2)*npx;clampPan();scheduleRender();}
-function fitCanvas(){state.zoom=1;state.panX=0;state.panY=0;scheduleRender();}
+function zoomAt(localX,localY,newZoom){state.focusTarget=null;if(els.focusBadge)els.focusBadge.hidden=true;const r=els.canvas.getBoundingClientRect(),oldPx=fitPixelSize()*state.zoom;const tx=(localX-(r.width/2+state.panX))/oldPx+state.size/2,ty=(localY-(r.height/2+state.panY))/oldPx+state.size/2;state.zoom=clamp(newZoom,.35,14);const npx=fitPixelSize()*state.zoom;state.panX=localX-r.width/2-(tx-state.size/2)*npx;state.panY=localY-r.height/2-(ty-state.size/2)*npx;clampPan();scheduleRender();}
+function fitCanvas(){state.zoom=1;state.panX=0;state.panY=0;state.focusTarget=null;if(els.focusBadge)els.focusBadge.hidden=true;scheduleRender();}
+
+const FOCUS_PARTS = [
+  ['head','Head'],['body','Body'],['rightArm','Right arm'],['leftArm','Left arm'],['rightLeg','Right leg'],['leftLeg','Left leg']
+];
+const FOCUS_COMMON = [
+  ['Head · all','head',null],['Head · front','head','front'],['Head · top','head','top'],['Head · back','head','back'],
+  ['Body · all','body',null],['Body · front','body','front'],['Body · back','body','back'],['Arms · all','arms','front'],
+  ['Arms · front','arms','front'],['Arms · back','arms','back'],['Legs · all','legs','front'],['Legs · front','legs','front'],
+  ['Legs · back','legs','back'],['Right leg · all','rightLeg',null],['Left leg · all','leftLeg',null],
+  ['Right arm · all','rightArm',null],['Left arm · all','leftArm',null],['Right leg · top','rightLeg','top'],['Left leg · top','leftLeg','top'],
+  ['Right arm · top','rightArm','top'],['Left arm · top','leftArm','top']
+];
+function focusBounds(partKey,face){
+  const L=scaledLayout(state.model);
+  if(partKey==='arms'||partKey==='legs'){
+    const keys=partKey==='arms'?['rightArm','leftArm']:['rightLeg','leftLeg'];
+    const rs=keys.map(k=>face?L[k]?.regions?.[face]:(()=>{const q=L[k];const rr=Object.values(q.regions);return {x:Math.min(...rr.map(r=>r.x)),y:Math.min(...rr.map(r=>r.y)),w:Math.max(...rr.map(r=>r.x+r.w))-Math.min(...rr.map(r=>r.x)),h:Math.max(...rr.map(r=>r.y+r.h))-Math.min(...rr.map(r=>r.y))};})()).filter(Boolean);
+    if(!rs.length)return null;
+    const x=Math.min(...rs.map(r=>r.x)), y=Math.min(...rs.map(r=>r.y)), x2=Math.max(...rs.map(r=>r.x+r.w)), y2=Math.max(...rs.map(r=>r.y+r.h));
+    return {x,y,w:x2-x,h:y2-y,label:`${partKey==='arms'?'Arms':'Legs'} · ${face}`};
+  }
+  const part=L[partKey]; if(!part)return null;
+  if(face && part.regions[face]) return {...part.regions[face],label:`${part.name} · ${face}`};
+  const rs=Object.values(part.regions);const x=Math.min(...rs.map(r=>r.x)),y=Math.min(...rs.map(r=>r.y)),x2=Math.max(...rs.map(r=>r.x+r.w)),y2=Math.max(...rs.map(r=>r.y+r.h));
+  return {x,y,w:x2-x,h:y2-y,label:part.name};
+}
+function focusTexture(partKey,face='front',label='Focus'){
+  const b=focusBounds(partKey,face); if(!b)return;
+  const r=els.canvas.getBoundingClientRect(); const basePx=fitPixelSize(); const pad=4;
+  const targetW=Math.max(8,b.w+pad*2), targetH=Math.max(8,b.h+pad*2);
+  const desiredW=r.width*.62, desiredH=r.height*.62;
+  const newZoom=clamp(Math.min(desiredW/(targetW*basePx),desiredH/(targetH*basePx)),.65,14);
+  state.zoom=newZoom;
+  const px=basePx*state.zoom; state.panX=r.width/2-(b.x+b.w/2-state.size/2)*px; state.panY=r.height/2-(b.y+b.h/2-state.size/2)*px; clampPan();
+  state.focusTarget={...b};
+  if(els.focusBadge){els.focusBadge.textContent=`FOCUS · ${b.label.toUpperCase()}`;els.focusBadge.hidden=false;}
+  scheduleRender();
+  if(els.focusMenu){els.focusMenu.hidden=true;els.focusToggleBtn?.setAttribute('aria-expanded','false');}
+  toast(`Focused on ${b.label}.`);
+}
+function renderFocusMenu(){
+  if(!els.focusCommon||!els.focusPartRow||!els.focusFaceRow)return;
+  els.focusCommon.innerHTML=FOCUS_COMMON.map(([label,part,face])=>`<button class="focus-btn" data-focus-part="${part}" data-focus-face="${face}">${label}</button>`).join('');
+  els.focusPartRow.innerHTML=FOCUS_PARTS.map(([part,label],i)=>`<button class="focus-btn ${i===0?'active':''}" data-focus-part-select="${part}">${label}</button>`).join('');
+  setFocusPart(FOCUS_PARTS[0][0]);
+  $$('.focus-btn[data-focus-part]',els.focusMenu).forEach(b=>b.addEventListener('click',()=>focusTexture(b.dataset.focusPart,b.dataset.focusFace,b.textContent)));
+  $$('.focus-btn[data-focus-part-select]',els.focusMenu).forEach(b=>b.addEventListener('click',()=>setFocusPart(b.dataset.focusPartSelect)));
+}
+function setFocusPart(part){
+  $$('.focus-btn[data-focus-part-select]',els.focusMenu).forEach(b=>b.classList.toggle('active',b.dataset.focusPartSelect===part));
+  const faces=['front','top','back','left','right','bottom'];
+  const L=layout(state.model)[part];
+  els.focusFaceRow.innerHTML=faces.filter(f=>L?.regions?.[f]).map(f=>`<button class="focus-btn" data-face="${f}">${f[0].toUpperCase()+f.slice(1)}</button>`).join('');
+  $$('.focus-face-row .focus-btn',els.focusMenu).forEach(b=>b.addEventListener('click',()=>focusTexture(part,b.dataset.face)));
+}
+function toggleFocusMenu(force){
+  if(!els.focusMenu||!els.focusToggleBtn)return; const open=force??els.focusMenu.hidden;
+  els.focusMenu.hidden=!open;els.focusToggleBtn.setAttribute('aria-expanded',String(open));
+  if(open)renderFocusMenu();
+}
 
 function drawChecker(target,w,h,cell){const bg=getComputedStyle(document.documentElement).getPropertyValue('--bg-2').trim()||'#0d1118';target.fillStyle=bg;target.fillRect(0,0,w,h);target.fillStyle='rgba(120,130,145,.10)';for(let y=0;y<h;y+=cell)for(let x=0;x<w;x+=cell)if(((x/cell+y/cell)&1)===0)target.fillRect(x,y,cell,cell);}
 function renderEditor(){
@@ -163,7 +241,9 @@ function renderEditor(){
   if(textureCanvas.width!==state.size){textureCanvas.width=state.size;textureCanvas.height=state.size;}textureCtx.putImageData(pixelsToImageData(),0,0);
   const px=fitPixelSize()*state.zoom,size=state.size*px,ox=r.width/2+state.panX-size/2,oy=r.height/2+state.panY-size/2;ctx.save();ctx.imageSmoothingEnabled=false;ctx.drawImage(textureCanvas,ox,oy,size,size);
   if(state.grid&&px>=4){ctx.globalAlpha=Math.min(.30,.07+(px-4)*.012);ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted').trim()||'#87919e';ctx.lineWidth=1;ctx.beginPath();for(let i=0;i<=state.size;i++){const gx=ox+i*px+.5,gy=oy+i*px+.5;ctx.moveTo(gx,oy);ctx.lineTo(gx,oy+size);ctx.moveTo(ox,gy);ctx.lineTo(ox+size,gy);}ctx.stroke();}
-  ctx.strokeStyle='rgba(255,255,255,.18)';ctx.lineWidth=1;ctx.strokeRect(ox+.5,oy+.5,size-1,size-1);ctx.restore();els.zoomReadout.textContent=`${Math.round(state.zoom*100)}%`;
+  ctx.strokeStyle='rgba(255,255,255,.18)';ctx.lineWidth=1;ctx.strokeRect(ox+.5,oy+.5,size-1,size-1);
+  if(state.focusTarget){const f=state.focusTarget;const fx=ox+f.x*px,fy=oy+f.y*px,fw=f.w*px,fh=f.h*px;ctx.save();ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#7FD7FF';ctx.lineWidth=Math.max(1.5,Math.min(3,px*.16));ctx.setLineDash([Math.max(4,px*.5),Math.max(3,px*.32)]);ctx.strokeRect(fx+.5,fy+.5,fw-1,fh-1);ctx.setLineDash([]);ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--panel').trim()||'#121720';ctx.globalAlpha=.92;const label=f.label;ctx.font='700 9px system-ui';const tw=ctx.measureText(label).width+14;const lh=18;ctx.fillRect(fx,Math.max(4,fy-lh),tw,lh);ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#7FD7FF';ctx.fillText(label,fx+7,Math.max(4,fy-lh)+12);ctx.restore();}
+  ctx.restore();els.zoomReadout.textContent=`${Math.round(state.zoom*100)}%`;
 }
 function scheduleRender(){if(editorFrame)return;editorFrame=requestAnimationFrame(()=>{editorFrame=0;renderEditor();renderChecks();touchPreview();});}
 
@@ -173,9 +253,10 @@ function renderPalettes(){
   $$('.swatch').forEach(b=>b.addEventListener('click',()=>setColor(b.dataset.color)));
 }
 function countAlpha(){let n=0;for(let i=3;i<state.pixels.length;i+=4)if(state.pixels[i])n++;return n;}
-function renderChecks(){if(!els.checks)return;const items=[[SUPPORTED_SIZES.includes(state.size),`${state.size}×${state.size} texture loaded`],[countAlpha()>0,'Texture contains visible pixels'],[preview?.ready===true,preview?.modelName?`${preview.modelName} preview ready`:'3D preview unavailable'],[state.historyIndex>=0,'Undo history ready'],[state.reference?'Reference image loaded':'No reference image',true],[state.model==='classic','Classic 4px arms selected']];els.checks.innerHTML=items.map(([a,b])=>{const ok=typeof b==='boolean'?b:a;const label=typeof b==='boolean'?'':b;return `<div class="check ${ok?'ok':'warn'}"><span class="check-icon">${ok?'✓':'!'}</span><span>${label||a}</span></div>`}).join('');}
+function renderChecks(){if(!els.checks)return;const gameReady=GAME_READY_SIZES.includes(state.size);const modelName=state.model==='classic'?'Classic / Steve · 4px arms':'Slim / Alex · 3px arms';const items=[[gameReady,gameReady?`${state.size}×${state.size} game-ready texture`:`${state.size}×${state.size} custom texture`],[countAlpha()>0,'Texture contains visible pixels'],[preview?.ready===true,preview?.modelName?`${preview.modelName} mapped`:'3D preview unavailable'],[state.historyIndex>=0,'Undo history ready'],[!!state.reference, state.reference?'Reference image loaded':'No reference image'],[true,`Model: ${modelName}`]];els.checks.innerHTML=items.map(([ok,label])=>`<div class="check ${ok?'ok':'warn'}"><span class="check-icon">${ok?'✓':'!'}</span><span>${label}</span></div>`).join('');}
 
-function setTool(tool){state.tool=tool;$$('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));if(els.activeToolLabel)els.activeToolLabel.textContent=tool.charAt(0).toUpperCase()+tool.slice(1);}
+function setTool(tool){state.tool=tool;$$('.tool-btn').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));const info=TOOL_INFO[tool]||TOOL_INFO.pencil;if(els.activeToolLabel)els.activeToolLabel.textContent=info.title;if($('#toolHelpTitle'))$('#toolHelpTitle').textContent=info.title;if($('#toolHelpText'))$('#toolHelpText').textContent=info.text;if($('#toolHelpTip'))$('#toolHelpTip').textContent=info.tip;}
+
 function saveProjectToLibrary(){
   if(!store)return;
   try{const all=JSON.parse(store.getItem('nova-skin-library')||'[]');const pngCanvas=document.createElement('canvas');pngCanvas.width=state.size;pngCanvas.height=state.size;pngCanvas.getContext('2d').putImageData(pixelsToImageData(),0,0);const data=pngCanvas.toDataURL('image/png');const item={id:Date.now().toString(36)+Math.random().toString(36).slice(2,8),title:state.title,size:state.size,model:state.model,data};const next=[item,...all.filter(x=>x.title!==item.title)].slice(0,LIBRARY_LIMIT);store.setItem('nova-skin-library',JSON.stringify(next));renderLibrary();}catch{toast('Library storage is full. Current skin is still safe in this tab.');}
@@ -184,8 +265,10 @@ function loadLibrary(){if(!store)return;try{const all=JSON.parse(store.getItem('
 function renderLibrary(items){if(!els.libraryList)return;items=items||(()=>{try{return JSON.parse(store?.getItem('nova-skin-library')||'[]')}catch{return[]}})();els.libraryList.innerHTML=items.length?items.map(i=>`<button class="library-item" data-id="${i.id}"><img src="${i.data}" alt=""><span>${i.title}</span><small>${i.size}×${i.size} · ${i.model==='slim'?'Slim':'Classic'}</small></button>`).join(''):'<div class="library-empty" id="libraryEmpty">Your saved skins will appear here.</div>';$$('.library-item').forEach(b=>b.addEventListener('click',()=>{const id=b.dataset.id,all=JSON.parse(store.getItem('nova-skin-library')||'[]'),i=all.find(x=>x.id===id);if(i)loadDataUrlAsSkin(i.data,i.title,i.size,i.model);}));}
 function loadDataUrlAsSkin(data,title,size,model){const img=new Image();img.onload=()=>{state.size=size;state.model=model;els.modelSelect.value=model;els.textureSizeSelect.value=String(size);const c=document.createElement('canvas');c.width=size;c.height=size;c.getContext('2d').drawImage(img,0,0);state.pixels=new Uint8ClampedArray(c.getContext('2d').getImageData(0,0,size,size).data);state.title=title;state.history=[];state.historyIndex=-1;saveHistory();setDocMeta();preview?.setModel(model);fitCanvas();scheduleRender();toast('Saved skin loaded.');};img.src=data;}
 
-function importSkin(file){if(!file)return;const img=new Image();img.onload=()=>{const w=img.naturalWidth,h=img.naturalHeight;if(w!==h||!SUPPORTED_SIZES.includes(w)){loadReference(file);toast(`${w}×${h} is not a supported skin texture. Loaded as a reference instead.`);return;}const c=document.createElement('canvas');c.width=w;c.height=h;const cctx=c.getContext('2d',{willReadFrequently:true});cctx.imageSmoothingEnabled=false;cctx.drawImage(img,0,0);state.size=w;state.pixels=new Uint8ClampedArray(cctx.getImageData(0,0,w,h).data);state.title=(file.name||'Imported skin').replace(/\.png$/i,'')||'Imported skin';state.history=[];state.historyIndex=-1;saveHistory();els.textureSizeSelect.value=String(w);setDocMeta();preview?.setModel(state.model);fitCanvas();scheduleRender();saveProjectToLibrary();toast(`${w}×${h} skin imported and applied automatically.`);};img.onerror=()=>toast('That image could not be read.');img.src=URL.createObjectURL(file);}
-function useReferenceAsSkin(){if(!state.reference)return toast('Add a reference image first.');if(!SUPPORTED_SIZES.includes(state.reference.width)||state.reference.width!==state.reference.height)return toast('Only 64×64 and 128×128 images can become a game-ready skin.');const c=document.createElement('canvas');c.width=state.reference.width;c.height=state.reference.height;c.getContext('2d').drawImage(state.reference,0,0);state.size=state.reference.width;state.pixels=new Uint8ClampedArray(c.getContext('2d').getImageData(0,0,state.size,state.size).data);state.title='Reference skin';state.history=[];state.historyIndex=-1;saveHistory();setDocMeta();preview?.setModel(state.model);scheduleRender();saveProjectToLibrary();toast('Reference copied into the skin editor.');}
+function isEditableSquareSize(n){return Number.isInteger(n)&&n>=MIN_EDITABLE_SIZE&&n<=MAX_EDITABLE_SIZE;}
+function importSkin(file){if(!file)return;const img=new Image();img.onload=()=>{const w=img.naturalWidth,h=img.naturalHeight;if(w!==h||!isEditableSquareSize(w)){loadReference(file);toast(`${w}×${h} is not a square editable texture. It was loaded as a reference instead.`);return;}const c=document.createElement('canvas');c.width=w;c.height=h;const cctx=c.getContext('2d',{willReadFrequently:true});cctx.imageSmoothingEnabled=false;cctx.clearRect(0,0,w,h);cctx.drawImage(img,0,0);state.size=w;state.pixels=new Uint8ClampedArray(cctx.getImageData(0,0,w,h).data);state.title=(file.name||'Imported skin').replace(/\.(png|jpe?g|webp)$/i,'')||'Imported skin';state.history=[];state.historyIndex=-1;saveHistory();setDocMeta();preview?.setModel(state.model);fitCanvas();scheduleRender();saveProjectToLibrary();toast(GAME_READY_SIZES.includes(w)?`${w}×${w} skin imported and applied automatically.`:`${w}×${w} advanced texture imported. Export is PNG; a compatible custom-geometry workflow may be needed for Minecraft.`);};img.onerror=()=>toast('That image could not be read.');img.src=URL.createObjectURL(file);}
+
+function useReferenceAsSkin(){if(!state.reference)return toast('Add a reference image first.');if(state.reference.width!==state.reference.height||!isEditableSquareSize(state.reference.width))return toast('Only square 16–1024 images can become editable textures.');const c=document.createElement('canvas');c.width=state.reference.width;c.height=state.reference.height;c.getContext('2d').drawImage(state.reference,0,0);state.size=state.reference.width;state.pixels=new Uint8ClampedArray(c.getContext('2d').getImageData(0,0,state.size,state.size).data);state.title='Reference skin';state.history=[];state.historyIndex=-1;saveHistory();setDocMeta();preview?.setModel(state.model);scheduleRender();saveProjectToLibrary();toast(GAME_READY_SIZES.includes(state.size)?'Reference copied into the game-ready skin editor.':'Reference copied into the advanced texture editor.');}
 function loadReference(file){if(!file)return;const img=new Image();img.onload=()=>{state.reference=img;state.referenceVisible=true;els.referenceToggle.checked=true;els.referenceChip.hidden=false;els.referenceText.textContent=`Reference: ${file.name} (${img.width}×${img.height}). It is visual guidance only.`;scheduleRender();toast('Reference image loaded.');};img.onerror=()=>toast('Could not read that image.');img.src=URL.createObjectURL(file);}
 function clearReference(){state.reference=null;state.referenceVisible=false;els.referenceToggle.checked=false;els.referenceChip.hidden=true;els.referenceText.textContent='Use Reference for screenshots, photos, or concept art. It will not be exported.';scheduleRender();}
 function exportPng(){const out=document.createElement('canvas');out.width=state.size;out.height=state.size;out.getContext('2d').putImageData(pixelsToImageData(),0,0);out.toBlob(blob=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${slugify(state.title)}-${state.size}x${state.size}.png`;a.click();URL.revokeObjectURL(url);toast('PNG exported.');},'image/png');}
@@ -199,7 +282,8 @@ function renderGuide(){const c=$('#guideCanvas');if(!c)return;const g=c.getConte
 
 function setGeometryInputs(){const g=state.geometry;for(const k of ['w','h','d','x','y','z','rx','ry','rz']){const el=$(`#geo${k.toUpperCase()}`);if(el)el.value=g[k];}}
 function readGeometry(){const g=state.geometry;for(const k of ['w','h','d','x','y','z','rx','ry','rz']){const el=$(`#geo${k.toUpperCase()}`);if(el)g[k]=+el.value||0;}}
-function resetGeometry(){state.geometry={enabled:false,w:4,h:4,d:4,x:0,y:4,z:0,rx:0,ry:0,rz:0,color:'#B68CFF'};if(els.geometryToggle)els.geometryToggle.checked=false;setGeometryInputs();preview?.renderNow();}
+function resetGeometry(){state.geometry={enabled:false,w:4,h:4,d:4,x:0,y:4,z:0,rx:0,ry:0,rz:0,color:'#B68CFF'};state.geometryAsset=null;if(els.geometryToggle)els.geometryToggle.checked=false;setGeometryInputs();preview?.renderNow();}
+function importGeometryJSON(file){if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const json=JSON.parse(String(reader.result));const geometry=json?.minecraft?.geometry?.[0]||json?.geometry?.[0]||null;if(!geometry){toast('That JSON does not contain a readable minecraft geometry.');return;}state.geometryAsset={name:file.name,geometry};const bones=Array.isArray(geometry.bones)?geometry.bones:[];let cube=null;for(const b of bones){if(Array.isArray(b.cubes)&&b.cubes.length){cube=b.cubes[0];break;}}if(cube){const size=Array.isArray(cube.size)?cube.size:[4,4,4],origin=Array.isArray(cube.origin)?cube.origin:[-2,6,-2],pivot=Array.isArray(cube.pivot)?cube.pivot:[origin[0]+size[0]/2,origin[1]+size[1]/2,origin[2]+size[2]/2],rotation=Array.isArray(cube.rotation)?cube.rotation:[0,0,0];state.geometry={enabled:true,w:size[0],h:size[1],d:size[2],x:pivot[0],y:pivot[1],z:pivot[2],rx:rotation[0]||0,ry:rotation[1]||0,rz:rotation[2]||0,color:'#B68CFF'};els.geometryToggle.checked=true;setGeometryInputs();}preview?.renderNow();toast(`Geometry loaded. ${cube?'The first custom cube is shown in the lab.':'The file was saved as an advanced geometry asset.'}`);}catch{toast('That geometry file could not be parsed.');}};reader.readAsText(file);}
 function exportGeometryJSON(){readGeometry();const g=state.geometry;const json={format_version:'1.12.0',minecraft:{geometry:[{description:{identifier:'geometry.nova_skin_5d',texture_width:state.size,texture_height:state.size,visible_bounds_width:4,visible_bounds_height:4,visible_bounds_offset:[0,0,0]},bones:[{name:'root',pivot:[0,0,0],cubes:[{origin:[g.x-g.w/2,g.y-g.h/2,g.z-g.d/2],size:[g.w,g.h,g.d],rotation:[g.rx,g.ry,g.rz],pivot:[g.x,g.y,g.z]}]}]}]}};const blob=new Blob([JSON.stringify(json,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${slugify(state.title)}-5d-geometry.geo.json`;a.click();URL.revokeObjectURL(url);toast('Experimental 5D geometry JSON exported.');}
 
 // --- Preview ---------------------------------------------------------------
@@ -211,71 +295,101 @@ function RY(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([c,0,-s
 function RZ(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([c,s,0,0,-s,c,0,0,0,0,1,0,0,0,0,1]);}
 function perspective(fov,aspect,near,far){const f=1/Math.tan(fov/2),nf=1/(near-far),m=new Float32Array(16);m[0]=f/aspect;m[5]=f;m[10]=(far+near)*nf;m[11]=-1;m[14]=2*far*near*nf;return m;}
 function lookAt(eye,c,up){let z0=eye[0]-c[0],z1=eye[1]-c[1],z2=eye[2]-c[2],l=Math.hypot(z0,z1,z2);z0/=l;z1/=l;z2/=l;let x0=up[1]*z2-up[2]*z1,x1=up[2]*z0-up[0]*z2,x2=up[0]*z1-up[1]*z0;l=Math.hypot(x0,x1,x2);x0/=l;x1/=l;x2/=l;const y0=z1*x2-z2*x1,y1=z2*x0-z0*x2,y2=z0*x1-z1*x0;return new Float32Array([x0,y0,z0,0,x1,y1,z1,0,x2,y2,z2,0,-(x0*eye[0]+x1*eye[1]+x2*eye[2]),-(y0*eye[0]+y1*eye[1]+y2*eye[2]),-(z0*eye[0]+z1*eye[1]+z2*eye[2]),1]);}
-function cubeData(size,regions,texSize){const [w,h,d]=size,hx=w/2,hy=h/2,hz=d/2,P={p:[],u:[],n:[],i:[]};
-  const add=(a,b,c,dv,uv,n)=>{const base=P.p.length/3;[a,b,c,dv].forEach(v=>P.p.push(...v));const [u0,v0,u1,v1]=uv;P.u.push(u0,v0,u1,v0,u1,v1,u0,v1);for(let i=0;i<4;i++)P.n.push(...n);P.i.push(base,base+1,base+2,base,base+2,base+3);};
-  const uv=(r,flipU=false,flipV=false)=>{const u0=r.x/texSize,u1=(r.x+r.w)/texSize,v0=1-(r.y+r.h)/texSize,v1=1-r.y/texSize;return[flipU?u1:u0,flipV?v1:v0,flipU?u0:u1,flipV?v0:v1];};
-  // The winding/UV pairs below keep each face readable from outside the model.
-  add([-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz],uv(regions.front),[0,0,1]);
-  add([hx,-hy,-hz],[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz],uv(regions.back,true),[0,0,-1]);
-  add([hx,-hy,hz],[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz],uv(regions.right,true),[1,0,0]);
-  add([-hx,-hy,-hz],[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz],uv(regions.left),[-1,0,0]);
-  add([-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz],[-hx,hy,-hz],uv(regions.top,false,true),[0,1,0]);
-  add([-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[-hx,-hy,hz],uv(regions.bottom,false,true),[0,-1,0]);
-  return P; }
-function shader(gl,type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s)||'shader compile error');return s;}
-function makeProgram(gl){const vs=shader(gl,gl.VERTEX_SHADER,`attribute vec3 aP;attribute vec2 aUV;attribute vec3 aN;uniform mat4 uVP;uniform mat4 uM;varying vec2 vUV;varying vec3 vN;void main(){vUV=aUV;vN=mat3(uM)*aN;gl_Position=uVP*uM*vec4(aP,1.0);}`);const fs=shader(gl,gl.FRAGMENT_SHADER,`precision mediump float;uniform sampler2D uTex;uniform vec4 uColor;uniform bool uTextured;varying vec2 vUV;varying vec3 vN;void main(){vec4 c=uTextured?texture2D(uTex,vUV):uColor;if(c.a<0.02)discard;vec3 L=normalize(vec3(.3,.85,.55));float sh=.72+.28*max(dot(normalize(vN),L),0.0);gl_FragColor=vec4(c.rgb*sh,c.a);}`);const p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p)||'program link error');return p;}
+function addFace(data,p0,p1,p2,p3,uv,normal){
+  const base=data.p.length/3;
+  for(const p of [p0,p1,p2,p3])data.p.push(...p);
+  const [u0,v0,u1,v1]=uv;
+  data.u.push(u0,v1,u1,v1,u1,v0,u0,v0);
+  for(let i=0;i<4;i++)data.n.push(...normal);
+  data.i.push(base,base+1,base+2,base,base+2,base+3);
+}
+function uvRect(r,texSize){return[r.x/texSize,(texSize-r.y)/texSize,(r.x+r.w)/texSize,(texSize-r.y-r.h)/texSize];}
+function cubeData(size,regions,texSize){
+  const [w,h,d]=size,hx=w/2,hy=h/2,hz=d/2,P={p:[],u:[],n:[],i:[]};
+  addFace(P,[-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz],uvRect(regions.front,texSize),[0,0,1]);
+  addFace(P,[hx,-hy,-hz],[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz],uvRect(regions.back,texSize),[0,0,-1]);
+  addFace(P,[hx,-hy,hz],[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz],uvRect(regions.right,texSize),[1,0,0]);
+  addFace(P,[-hx,-hy,-hz],[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz],uvRect(regions.left,texSize),[-1,0,0]);
+  addFace(P,[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz],[-hx,hy,-hz],uvRect(regions.top,texSize),[0,1,0]);
+  addFace(P,[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[-hx,-hy,hz],uvRect(regions.bottom,texSize),[0,-1,0]);
+  return P;
+}
+function mergeGeometry(parts){const out={p:[],u:[],n:[],i:[]};let offset=0;for(const q of parts){out.p.push(...q.p);out.u.push(...q.u);out.n.push(...q.n);for(const i of q.i)out.i.push(i+offset);offset+=q.p.length/3;}return out;}
 function makePreview(){
   let gl;try{gl=els.previewCanvas.getContext('webgl',{alpha:false,antialias:false,powerPreference:'low-power',preserveDrawingBuffer:false});}catch{gl=null;}
   const noop={ready:false,modelName:'Preview unavailable',update(){},invalidate(){},setModel(){},front(){},top(){},back(){},side(){},reset(){},fit(){},renderNow(){},togglePlay(){},setPose(){},setSpeed(){}};
   if(!gl)return noop;
   let program;try{program=makeProgram(gl);}catch(err){console.error(err);return noop;}
   const loc={p:gl.getAttribLocation(program,'aP'),uv:gl.getAttribLocation(program,'aUV'),n:gl.getAttribLocation(program,'aN'),vp:gl.getUniformLocation(program,'uVP'),m:gl.getUniformLocation(program,'uM'),tex:gl.getUniformLocation(program,'uTex'),color:gl.getUniformLocation(program,'uColor'),textured:gl.getUniformLocation(program,'uTextured')};
-  const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  const skinCanvas=document.createElement('canvas');let skinCtx=skinCanvas.getContext('2d');skinCtx.imageSmoothingEnabled=false;const meshes={};const pv={ready:true,modelName:'Classic / Steve',yaw:.18,pitch:.12,zoom:1.0,drag:false,lastX:0,lastY:0,pointers:new Map(),pinch:null,animation:'none',playing:false,speed:1,animTime:0,lastTime:0,dirty:true};
-  function syncTexture(){if(skinCanvas.width!==state.size||skinCanvas.height!==state.size){skinCanvas.width=state.size;skinCanvas.height=state.size;skinCtx=skinCanvas.getContext('2d');skinCtx.imageSmoothingEnabled=false;}skinCtx.putImageData(pixelsToImageData(),0,0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,skinCanvas);pv.dirty=false;}
+  const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+  const skinCanvas=document.createElement('canvas');let skinCtx=skinCanvas.getContext('2d');skinCtx.imageSmoothingEnabled=false;const meshes={};const pv={ready:true,modelName:'Classic / Steve',yaw:.20,pitch:.08,zoom:1.12,drag:false,lastX:0,lastY:0,pointers:new Map(),pinch:null,animation:'none',playing:false,speed:1,animTime:0,lastTime:0,lastFrame:0,dirty:true};
+  function syncTexture(){if(skinCanvas.width!==state.size||skinCanvas.height!==state.size){skinCanvas.width=state.size;skinCanvas.height=state.size;skinCtx=skinCanvas.getContext('2d');skinCtx.imageSmoothingEnabled=false;}skinCtx.putImageData(pixelsToImageData(),0,0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,skinCanvas);pv.dirty=false;}
   function upload(name,data){const b={p:gl.createBuffer(),u:gl.createBuffer(),n:gl.createBuffer(),i:gl.createBuffer(),count:data.i.length};gl.bindBuffer(gl.ARRAY_BUFFER,b.p);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data.p),gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,b.u);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data.u),gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,b.n);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data.n),gl.STATIC_DRAW);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,b.i);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(data.i),gl.STATIC_DRAW);meshes[name]=b;}
   function clearMeshes(){for(const m of Object.values(meshes)){gl.deleteBuffer(m.p);gl.deleteBuffer(m.u);gl.deleteBuffer(m.n);gl.deleteBuffer(m.i);}for(const k of Object.keys(meshes))delete meshes[k];}
-  function build(model){clearMeshes();const C=layout(model),L=scaledLayout(model),parts=[['head',[0,12,0],[8,8,8],L.head],['body',[0,2,0],[8,12,4],L.body],['rightLeg',[-2,-10,0],[4,12,4],L.rightLeg],['leftLeg',[2,-10,0],[4,12,4],L.leftLeg],['rightArm',[-(4+C.armW/2),1.6,0],[C.armW,12,4],L.rightArm],['leftArm',[(4+C.armW/2),1.6,0],[C.armW,12,4],L.leftArm]];for(const [name,,size,part] of parts)upload(name,cubeData(size,part.regions,state.size));const outer=[['headOuter',[8.75,8.75,8.75],L.outerHead],['bodyOuter',[8.75,12.75,4.75],L.outerBody],['rightLegOuter',[4.75,12.75,4.75],L.outerRightLeg],['leftLegOuter',[4.75,12.75,4.75],L.outerLeftLeg],['rightArmOuter',[C.armW+.75,12.75,4.75],L.outerRightArm],['leftArmOuter',[C.armW+.75,12.75,4.75],L.outerLeftArm]];for(const [name,size,part] of outer)upload(name,cubeData(size,part.regions,state.size));pv.modelName=model==='slim'?'Slim / Alex':'Classic / Steve';pv.dirty=true;render();}
-  function resize(){const dpr=Math.min(window.devicePixelRatio||1,1.5),w=Math.max(240,Math.round(els.previewCanvas.clientWidth*dpr)),h=Math.max(240,Math.round(els.previewCanvas.clientHeight*dpr));if(els.previewCanvas.width!==w||els.previewCanvas.height!==h){els.previewCanvas.width=w;els.previewCanvas.height=h;}gl.viewport(0,0,els.previewCanvas.width,els.previewCanvas.height);}
-  function draw(name,m,texd=true,color=[.45,.7,.95,1]){const b=meshes[name];if(!b)return;gl.uniformMatrix4fv(loc.m,false,m);gl.uniform1i(loc.textured,texd?1:0);gl.uniform4fv(loc.color,new Float32Array(color));gl.bindBuffer(gl.ARRAY_BUFFER,b.p);gl.enableVertexAttribArray(loc.p);gl.vertexAttribPointer(loc.p,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,b.u);gl.enableVertexAttribArray(loc.uv);gl.vertexAttribPointer(loc.uv,2,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,b.n);gl.enableVertexAttribArray(loc.n);gl.vertexAttribPointer(loc.n,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,b.i);gl.drawElements(gl.TRIANGLES,b.count,gl.UNSIGNED_SHORT,0);}
+  function build(model){
+    clearMeshes();
+    const C=layout(model),L=scaledLayout(model);
+    const parts=[
+      ['head',[0,12,0],[8,8,8],L.head],
+      ['body',[0,2,0],[8,12,4],L.body],
+      ['rightLeg',[-2,-10,0],[4,12,4],L.rightLeg],
+      ['leftLeg',[2,-10,0],[4,12,4],L.leftLeg],
+      ['rightArm',[-(4+C.armW/2),1.6,0],[C.armW,12,4],L.rightArm],
+      ['leftArm',[(4+C.armW/2),1.6,0],[C.armW,12,4],L.leftArm]
+    ];
+    for(const [name,,size,part] of parts)upload(name,cubeData(size,part.regions,state.size));
+    const outer=[
+      ['headOuter',[8.75,8.75,8.75],L.outerHead],
+      ['bodyOuter',[8.75,12.75,4.75],L.outerBody],
+      ['rightLegOuter',[4.75,12.75,4.75],L.outerRightLeg],
+      ['leftLegOuter',[4.75,12.75,4.75],L.outerLeftLeg],
+      ['rightArmOuter',[C.armW+.75,12.75,4.75],L.outerRightArm],
+      ['leftArmOuter',[C.armW+.75,12.75,4.75],L.outerLeftArm]
+    ];
+    for(const [name,size,part] of outer)upload(name,cubeData(size,part.regions,state.size));
+    pv.modelName=model==='slim'?'Slim / Alex • 3px arms':'Classic / Steve • 4px arms';pv.dirty=true;render();
+  }
+  function resize(){const dpr=Math.min(window.devicePixelRatio||1,1.5),w=Math.max(260,Math.round(els.previewCanvas.clientWidth*dpr)),h=Math.max(260,Math.round(els.previewCanvas.clientHeight*dpr));if(els.previewCanvas.width!==w||els.previewCanvas.height!==h){els.previewCanvas.width=w;els.previewCanvas.height=h;}gl.viewport(0,0,els.previewCanvas.width,els.previewCanvas.height);}
+  function draw(name,m,texd=true,color=[.6,.78,.95,1]){const b=meshes[name];if(!b)return;gl.uniformMatrix4fv(loc.m,false,m);gl.uniform1i(loc.textured,texd?1:0);gl.uniform4fv(loc.color,new Float32Array(color));gl.bindBuffer(gl.ARRAY_BUFFER,b.p);gl.enableVertexAttribArray(loc.p);gl.vertexAttribPointer(loc.p,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,b.u);gl.enableVertexAttribArray(loc.uv);gl.vertexAttribPointer(loc.uv,2,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,b.n);gl.enableVertexAttribArray(loc.n);gl.vertexAttribPointer(loc.n,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,b.i);gl.drawElements(gl.TRIANGLES,b.count,gl.UNSIGNED_SHORT,0);}
   function partM(pos,pivot,rx=0,ry=0,rz=0){let m=T(pos[0],pos[1],pos[2]);if(pivot)m=mat4Mul(T(pivot[0],pivot[1],pivot[2]),mat4Mul(RX(rx),mat4Mul(RY(ry),mat4Mul(RZ(rz),T(pos[0]-pivot[0],pos[1]-pivot[1],pos[2]-pivot[2])))));return m;}
   function render(now=performance.now()){
+    if(pv.playing && now-pv.lastFrame<30){requestAnimationFrame(render);return;}pv.lastFrame=now;
     resize();if(pv.dirty)syncTexture();if(pv.playing){const dt=Math.min(.05,(now-pv.lastTime)/1000||0);pv.animTime+=dt*pv.speed;pv.lastTime=now;}
-    gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.clearColor(.025,.03,.04,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.useProgram(program);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(loc.tex,0);
-    const aspect=els.previewCanvas.width/els.previewCanvas.height,dist=40/pv.zoom,cp=Math.cos(pv.pitch),eye=[Math.sin(pv.yaw)*cp*dist,Math.sin(pv.pitch)*dist+1,Math.cos(pv.yaw)*cp*dist],vp=mat4Mul(perspective(28*Math.PI/180,aspect,.1,180),lookAt(eye,[0,0,0],[0,1,0]));gl.uniformMatrix4fv(loc.vp,false,vp);
-    const armW=layout(state.model).armW,walk=state.animation==='walk'?Math.sin(pv.animTime*5.4)*.45:0,parts=[['head',[0,12,0],null],[ 'body',[0,2,0],null],['rightLeg',[-2,-10,0],[-2,-4,0],-walk],['leftLeg',[2,-10,0],[2,-4,0],walk],['rightArm',[-(4+armW/2),1.6,0],[-(4+armW/2),7.6,0],walk],['leftArm',[(4+armW/2),1.6,0],[(4+armW/2),7.6,0],-walk]];
-    for(const [name,pos,pivot,rot] of parts)draw(name,partM(pos,pivot,rot||0,0,0));
-    if(state.outer){const map={head:'headOuter',body:'bodyOuter',rightLeg:'rightLegOuter',leftLeg:'leftLegOuter',rightArm:'rightArmOuter',leftArm:'leftArmOuter'};for(const [name,pos,pivot,rot] of parts)draw(map[name],partM(pos,pivot,rot||0,0,0));}
+    gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.clearColor(.055,.065,.085,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.useProgram(program);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(loc.tex,0);
+    const aspect=els.previewCanvas.width/els.previewCanvas.height,dist=38/pv.zoom,cp=Math.cos(pv.pitch),eye=[Math.sin(pv.yaw)*cp*dist,Math.sin(pv.pitch)*dist+1,Math.cos(pv.yaw)*cp*dist],vp=mat4Mul(perspective(28*Math.PI/180,aspect,.1,180),lookAt(eye,[0,0,0],[0,1,0]));gl.uniformMatrix4fv(loc.vp,false,vp);
+    const armW=layout(state.model).armW,walk=state.animation==='walk'?Math.sin(pv.animTime*5.1)*.42:0,bob=state.animation==='walk'?Math.abs(Math.sin(pv.animTime*5.1))*.22:0;
+    const parts=[['head',[0,bob+12,0],null],['body',[0,bob+2,0],null],['rightLeg',[-2,-10,0],[-2,-4,0],-walk],['leftLeg',[2,-10,0],[2,-4,0],walk],['rightArm',[-(4+armW/2),bob+1.6,0],[-(4+armW/2),7.6,0],walk],['leftArm',[(4+armW/2),bob+1.6,0],[(4+armW/2),7.6,0],-walk]];
+    for(const [name,pos,pivot,rot] of parts)draw(name,partM(pos,pivot,rot||0));
+    if(state.outer){const map={head:'headOuter',body:'bodyOuter',rightLeg:'rightLegOuter',leftLeg:'leftLegOuter',rightArm:'rightArmOuter',leftArm:'leftArmOuter'};for(const [name,pos,pivot,rot] of parts)draw(map[name],partM(pos,pivot,rot||0));}
     if(state.geometry.enabled){const g=state.geometry,deg=[g.rx*Math.PI/180,g.ry*Math.PI/180,g.rz*Math.PI/180],m=partM([g.x,g.y,g.z],[g.x,g.y,g.z],...deg);const data=cubeData([g.w,g.h,g.d],{front:{x:0,y:0,w:1,h:1},back:{x:0,y:0,w:1,h:1},left:{x:0,y:0,w:1,h:1},right:{x:0,y:0,w:1,h:1},top:{x:0,y:0,w:1,h:1},bottom:{x:0,y:0,w:1,h:1}},1);if(!meshes.__geo)upload('__geo',data);draw('__geo',m,false,hexToRgba(g.color||'#B68CFF',255).map((v,i)=>i<3?v/255:v));}
     if(pv.playing)requestAnimationFrame(render);
   }
-  function rebuild(){build(state.model);}
   function update(){pv.dirty=true;if(!pv.playing)render();}
   function setModel(model){build(model);}
-  function setPose(){state.animation=els.animationSelect.value;if(!pv.playing)render();}
-  function reset(){pv.yaw=.18;pv.pitch=.12;pv.zoom=1;pv.animTime=0;pv.playing=false;els.animationSelect.value='none';state.animation='none';els.animationStatus.textContent='OFF';els.animationToggle.textContent='Play';render();}
-  function front(){pv.yaw=0;pv.pitch=.04;render();} function back(){pv.yaw=Math.PI;pv.pitch=.04;render();} function top(){pv.yaw=0;pv.pitch=1.2;render();} function side(){pv.yaw=Math.PI/2;pv.pitch=.04;render();} function fit(){pv.zoom=1;render();}
-  els.previewCanvas.addEventListener('pointerdown',e=>{els.previewCanvas.setPointerCapture?.(e.pointerId);pv.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pv.pointers.size===1){pv.drag=true;pv.lastX=e.clientX;pv.lastY=e.clientY;}else if(pv.pointers.size===2){pv.drag=false;const[a,b]=[...pv.pointers.values()];pv.pinch={dist:Math.hypot(a.x-b.x,a.y-b.y),zoom:pv.zoom};}});
-  els.previewCanvas.addEventListener('pointermove',e=>{if(pv.pointers.has(e.pointerId))pv.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pv.pointers.size>=2){const[a,b]=[...pv.pointers.values()],d=Math.hypot(a.x-b.x,a.y-b.y);if(pv.pinch)pv.zoom=clamp(pv.pinch.zoom*d/(pv.pinch.dist||1),.62,2.8);render();return;}if(!pv.drag)return;pv.yaw+=(e.clientX-pv.lastX)*.01;pv.pitch=clamp(pv.pitch+(e.clientY-pv.lastY)*.01,-1.35,1.35);pv.lastX=e.clientX;pv.lastY=e.clientY;render();});
+  function setPose(){state.animation=els.animationSelect.value==='walk'?'walk':'none';if(!pv.playing)render();}
+  function reset(){pv.yaw=.20;pv.pitch=.08;pv.zoom=1.12;pv.animTime=0;pv.playing=false;state.animation='none';els.animationSelect.value='none';els.animationStatus.textContent='OFF';els.animationToggle.textContent='Play';render();}
+  function front(){pv.yaw=0;pv.pitch=.03;render();}function back(){pv.yaw=Math.PI;pv.pitch=.03;render();}function top(){pv.yaw=0;pv.pitch=1.20;render();}function side(){pv.yaw=Math.PI/2;pv.pitch=.03;render();}function fit(){pv.zoom=1.12;render();}
+  els.previewCanvas.addEventListener('pointerdown',e=>{els.previewCanvas.setPointerCapture?.(e.pointerId);pv.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pv.pointers.size===1){pv.drag=true;pv.lastX=e.clientX;pv.lastY=e.clientY;}else if(pv.pointers.size===2){pv.drag=false;const[a,b]=[...pv.pointers.values()];pv.pinch={dist:Math.hypot(a.x-b.x,a.y-b.y)||1,zoom:pv.zoom};}});
+  els.previewCanvas.addEventListener('pointermove',e=>{if(pv.pointers.has(e.pointerId))pv.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pv.pointers.size>=2){const[a,b]=[...pv.pointers.values()],d=Math.hypot(a.x-b.x,a.y-b.y)||1;if(pv.pinch)pv.zoom=clamp(pv.pinch.zoom*d/(pv.pinch.dist||1),.70,2.6);render();return;}if(!pv.drag)return;pv.yaw+=(e.clientX-pv.lastX)*.010;pv.pitch=clamp(pv.pitch+(e.clientY-pv.lastY)*.010,-1.42,1.42);pv.lastX=e.clientX;pv.lastY=e.clientY;render();});
   ['pointerup','pointercancel','pointerleave'].forEach(ev=>els.previewCanvas.addEventListener(ev,e=>{pv.pointers.delete(e.pointerId);if(pv.pointers.size<2)pv.pinch=null;pv.drag=false;}));
-  els.previewCanvas.addEventListener('wheel',e=>{e.preventDefault();pv.zoom=clamp(pv.zoom*(e.deltaY<0?1.1:.91),.62,2.8);render();},{passive:false});
+  els.previewCanvas.addEventListener('wheel',e=>{e.preventDefault();pv.zoom=clamp(pv.zoom*(e.deltaY<0?1.10:.91),.70,2.6);render();},{passive:false});
   function togglePlay(){pv.playing=!pv.playing;if(pv.playing){state.animation='walk';els.animationSelect.value='walk';els.animationStatus.textContent='ON';els.animationToggle.textContent='Pause';pv.lastTime=performance.now();requestAnimationFrame(render);}else{els.animationStatus.textContent='OFF';els.animationToggle.textContent='Play';render();}}
   function invalidate(){pv.dirty=true;if(!pv.playing)render();}
-  build(state.model);return{ready:true,modelName:pv.modelName,update, invalidate, setModel,front,top,back,side,reset,fit,renderNow:render,togglePlay,setPose,setSpeed(v){pv.speed=v;}};
+  build(state.model);return{ready:true,get modelName(){return pv.modelName;},update,invalidate,setModel,front,top,back,side,reset,fit,renderNow:render,togglePlay,setPose,setSpeed(v){pv.speed=v;}};
 }
 
 function editorPointerDown(e){
   if(e.pointerType==='mouse'&&e.button===2){e.preventDefault();const p=eventToPixel(e),c=getPixel(p.x,p.y);if(c[3])setColor('#'+rgbaToHex(c[0],c[1],c[2]));return;}
   if(e.pointerType==='mouse'&&e.button!==0)return;
   els.canvas.setPointerCapture?.(e.pointerId);state.activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType});
-  if(state.activePointers.size===2){state.drawing=false;if(state.strokeBefore)state.pixels.set(state.strokeBefore);state.strokeBefore=null;state.strokeChanged=false;state.dragStart=null;const pts=[...state.activePointers.values()],a=pts[0],b=pts[1];state.editorGesture={dist:Math.hypot(a.x-b.x,a.y-b.y)||1,mid:{x:(a.x+b.x)/2,y:(a.y+b.y)/2},zoom:state.zoom,panX:state.panX,panY:state.panY};return;}
+  if(state.activePointers.size===2){state.focusTarget=null;if(els.focusBadge)els.focusBadge.hidden=true;state.drawing=false;if(state.strokeBefore)state.pixels.set(state.strokeBefore);state.strokeBefore=null;state.strokeChanged=false;state.dragStart=null;const pts=[...state.activePointers.values()],a=pts[0],b=pts[1];state.editorGesture={dist:Math.hypot(a.x-b.x,a.y-b.y)||1,mid:{x:(a.x+b.x)/2,y:(a.y+b.y)/2},zoom:state.zoom,panX:state.panX,panY:state.panY};return;}
   const p=eventToPixel(e);els.cursorReadout.textContent=`X: ${clamp(p.x,0,state.size-1)} Y: ${clamp(p.y,0,state.size-1)}`;state.drawing=true;state.strokeBefore=new Uint8ClampedArray(state.pixels);state.strokeChanged=false;state.dragStart=p;
   if(!['line','rect','circle'].includes(state.tool))state.strokeChanged=toolAt(p.x,p.y)||state.strokeChanged;scheduleRender();
 }
 function editorPointerMove(e){
   if(state.activePointers.has(e.pointerId))state.activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType});
   if(state.activePointers.size>=2&&state.editorGesture){const pts=[...state.activePointers.values()],a=pts[0],b=pts[1],dist=Math.hypot(a.x-b.x,a.y-b.y)||1,mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2},g=state.editorGesture;const r=els.canvas.getBoundingClientRect();state.zoom=clamp(g.zoom*dist/g.dist,.35,14);state.panX=g.panX+(mid.x-g.mid.x);state.panY=g.panY+(mid.y-g.mid.y);clampPan();scheduleRender();return;}
-  if(!state.drawing)return;const p=eventToPixel(e);els.cursorReadout.textContent=`X: ${clamp(p.x,0,state.size-1)} Y: ${clamp(p.y,0,state.size-1)}`;if(['pencil','brush','eraser'].includes(state.tool)){const from=state.dragStart||p;for(const [x,y] of linePixels(from.x,from.y,p.x,p.y))state.strokeChanged=toolAt(x,y)||state.strokeChanged;state.dragStart=p;scheduleRender();}
+  if(!state.drawing)return;const p=eventToPixel(e);els.cursorReadout.textContent=`X: ${clamp(p.x,0,state.size-1)} Y: ${clamp(p.y,0,state.size-1)}`;if(['pencil','brush','eraser','shade'].includes(state.tool)){const from=state.dragStart||p;for(const [x,y] of linePixels(from.x,from.y,p.x,p.y))state.strokeChanged=toolAt(x,y)||state.strokeChanged;state.dragStart=p;scheduleRender();}
 }
 function editorPointerUp(e){
   state.activePointers.delete(e.pointerId);if(state.activePointers.size>=2)return;if(state.editorGesture){state.editorGesture=null;return;}if(!state.drawing)return;const p=eventToPixel(e);if(['line','rect','circle'].includes(state.tool)){if(state.tool==='line')for(const [x,y] of linePixels(state.dragStart.x,state.dragStart.y,p.x,p.y))state.strokeChanged=toolAt(x,y)||state.strokeChanged;else if(state.tool==='circle')for(const [x,y] of circlePixels(state.dragStart.x,state.dragStart.y,p.x,p.y))state.strokeChanged=toolAt(x,y)||state.strokeChanged;else{const x0=Math.min(state.dragStart.x,p.x),x1=Math.max(state.dragStart.x,p.x),y0=Math.min(state.dragStart.y,p.y),y1=Math.max(state.dragStart.y,p.y);for(let x=x0;x<=x1;x++){state.strokeChanged=toolAt(x,y0)||state.strokeChanged;state.strokeChanged=toolAt(x,y1)||state.strokeChanged;}for(let y=y0;y<=y1;y++){state.strokeChanged=toolAt(x0,y)||state.strokeChanged;state.strokeChanged=toolAt(x1,y)||state.strokeChanged;}}}state.drawing=false;state.dragStart=null;if(state.strokeChanged){saveHistory();saveProjectToLibrary();}scheduleRender();}
@@ -300,19 +414,21 @@ function bind(){
   els.colorInput?.addEventListener('input',e=>setColor(e.target.value));
   els.hexInput?.addEventListener('input',e=>{const v=e.target.value.replace(/[^0-9a-f]/gi,'').slice(0,6).toUpperCase();e.target.value=v;if(v.length===6)setColor('#'+v,false);});
   $('#undoBtn')?.addEventListener('click',undo);$('#redoBtn')?.addEventListener('click',redo);
-  $('#zoomInBtn')?.addEventListener('click',()=>zoomAt(els.canvas.clientWidth/2,els.canvas.clientHeight/2,state.zoom*1.25));$('#zoomOutBtn')?.addEventListener('click',()=>zoomAt(els.canvas.clientWidth/2,els.canvas.clientHeight/2,state.zoom*.8));$('#fitBtn')?.addEventListener('click',fitCanvas);$('#centerCanvasBtn')?.addEventListener('click',()=>{state.panX=state.panY=0;scheduleRender();});
+  $('#zoomInBtn')?.addEventListener('click',()=>zoomAt(els.canvas.clientWidth/2,els.canvas.clientHeight/2,state.zoom*1.25));$('#zoomOutBtn')?.addEventListener('click',()=>zoomAt(els.canvas.clientWidth/2,els.canvas.clientHeight/2,state.zoom*.8));$('#fitBtn')?.addEventListener('click',fitCanvas);$('#centerCanvasBtn')?.addEventListener('click',()=>{state.panX=state.panY=0;state.focusTarget=null;if(els.focusBadge)els.focusBadge.hidden=true;scheduleRender();});
+  els.focusToggleBtn?.addEventListener('click',()=>toggleFocusMenu());els.focusCloseBtn?.addEventListener('click',()=>toggleFocusMenu(false));els.focusMoreBtn?.addEventListener('click',()=>{const open=els.focusDetail.hidden;els.focusDetail.hidden=!open;els.focusMoreBtn.setAttribute('aria-expanded',String(open));if(open)renderFocusMenu();});els.focusAllBtn?.addEventListener('click',()=>{fitCanvas();toggleFocusMenu(false);});document.addEventListener('pointerdown',e=>{if(!els.focusMenu||els.focusMenu.hidden)return;if(e.target.closest('.canvas-focus'))return;toggleFocusMenu(false);});
   $('#gridBtn')?.addEventListener('click',()=>$('#gridToggle')?.click());$('#checkerBtn')?.addEventListener('click',()=>$('#checkerToggle')?.click());
   $('#newSkinBtn')?.addEventListener('click',()=>{if(confirm('Create a new starter skin? Unsaved changes will be replaced.')){createStarterPixels(state.model,state.size);state.history=[];state.historyIndex=-1;saveHistory();setDocMeta();fitCanvas();scheduleRender();toast('Starter skin loaded.');}});
   $('#templateBtn')?.addEventListener('click',()=>{createStarterPixels(state.model,state.size);state.history=[];state.historyIndex=-1;saveHistory();setDocMeta();fitCanvas();scheduleRender();toast('Complete editable template loaded.');});
-  $('#importBtn')?.addEventListener('click',()=>els.skinFileInput?.click());$('#uploadSkinHero')?.addEventListener('click',()=>els.skinFileInput?.click());els.skinFileInput?.addEventListener('change',e=>{importSkin(e.target.files?.[0]);e.target.value='';});
+  $('#importBtn')?.addEventListener('click',()=>els.skinFileInput?.click());$('#uploadSkinHero')?.addEventListener('click',()=>els.skinFileInput?.click());$('#advancedAssetBtn')?.addEventListener('click',()=>els.skinFileInput?.click());els.skinFileInput?.addEventListener('change',e=>{importSkin(e.target.files?.[0]);e.target.value='';});
+  $('#geometryImportBtn')?.addEventListener('click',()=>$('#geometryFileInput')?.click());$('#geometryFileInput')?.addEventListener('change',e=>{importGeometryJSON(e.target.files?.[0]);e.target.value='';});
   $('#referenceBtn')?.addEventListener('click',()=>els.referenceFileInput?.click());$('#referenceButton2')?.addEventListener('click',()=>els.referenceFileInput?.click());els.referenceFileInput?.addEventListener('change',e=>{loadReference(e.target.files?.[0]);e.target.value='';});$('#useReferenceAsSkinBtn')?.addEventListener('click',useReferenceAsSkin);$('#clearReferenceBtn')?.addEventListener('click',clearReference);
   $('#exportBtn')?.addEventListener('click',exportPng);$('#downloadTemplateBtn')?.addEventListener('click',downloadStarter);
   $('#guideBtn')?.addEventListener('click',()=>{$('#guideModal').hidden=false;renderGuide();});$('#guideBtn2')?.addEventListener('click',()=>{$('#guideModal').hidden=false;renderGuide();});$('#closeGuideBtn')?.addEventListener('click',()=>{$('#guideModal').hidden=true;});
   els.modelSelect?.addEventListener('change',()=>{state.model=els.modelSelect.value;preview?.setModel(state.model);renderGuide();renderChecks();scheduleRender();toast(`${state.model==='slim'?'Slim / Alex':'Classic / Steve'} selected.`);});
-  els.textureSizeSelect?.addEventListener('change',e=>{const n=+e.target.value;if(n!==state.size){const old=new Uint8ClampedArray(state.pixels),next=new Uint8ClampedArray(n*n*4);scalePixels(old,state.size,next,n);state.size=n;state.pixels=next;state.history=[];state.historyIndex=-1;saveHistory();setDocMeta();preview?.setModel(state.model);fitCanvas();scheduleRender();toast(`Texture resized to ${n}×${n}.`);}});
+  els.textureSizeSelect?.addEventListener('change',e=>{if(e.target.value==='custom'){e.target.value=(state.size===64||state.size===128)?String(state.size):'custom';toast('Use Upload asset image for a custom 16–1024 square texture.');return;}const n=+e.target.value;if(n!==state.size){const old=new Uint8ClampedArray(state.pixels),next=new Uint8ClampedArray(n*n*4);scalePixels(old,state.size,next,n);state.size=n;state.pixels=next;state.history=[];state.historyIndex=-1;saveHistory();setDocMeta();preview?.setModel(state.model);fitCanvas();scheduleRender();toast(`Texture resized to ${n}×${n}. The visible design stays the same; only pixel density changes.`);}});
   $('#clearHistoryBtn')?.addEventListener('click',()=>{state.recentColors=[DEFAULT_COLOR];renderPalettes();});
   $('#librarySaveBtn')?.addEventListener('click',()=>{saveProjectToLibrary();toast('Current skin saved to My skins.');});
-  els.canvas.addEventListener('pointerdown',editorPointerDown);els.canvas.addEventListener('pointermove',editorPointerMove);els.canvas.addEventListener('pointerup',editorPointerUp);els.canvas.addEventListener('pointercancel',editorPointerUp);els.canvas.addEventListener('wheel',editorWheel,{passive:false});els.canvas.addEventListener('contextmenu',e=>e.preventDefault());
+  els.canvas.addEventListener('pointerdown',editorPointerDown);els.canvas.addEventListener('pointermove',editorPointerMove);els.canvas.addEventListener('pointerup',editorPointerUp);els.canvas.addEventListener('pointercancel',editorPointerUp);els.canvas.addEventListener('wheel',editorWheel,{passive:false});els.canvas.addEventListener('contextmenu',e=>e.preventDefault());renderFocusMenu();
   $('#frontBtn')?.addEventListener('click',()=>preview?.front());$('#topBtn')?.addEventListener('click',()=>preview?.top());$('#backBtn')?.addEventListener('click',()=>preview?.back());$('#sideBtn')?.addEventListener('click',()=>preview?.side());$('#resetViewBtn')?.addEventListener('click',()=>preview?.reset());$('#previewZoomFitBtn')?.addEventListener('click',()=>preview?.fit());
   $('#animationSelect')?.addEventListener('change',()=>preview?.setPose());$('#animationToggle')?.addEventListener('click',()=>preview?.togglePlay());$('#animationReset')?.addEventListener('click',()=>preview?.reset());els.animationSpeed?.addEventListener('input',e=>{const v=+e.target.value;els.animationSpeedValue.textContent=`${v.toFixed(2)}×`;preview?.setSpeed(v);});
   els.geometryToggle?.addEventListener('change',e=>{state.geometry.enabled=e.target.checked;readGeometry();preview?.renderNow();});$$('.geometry-grid input').forEach(i=>i.addEventListener('input',()=>{readGeometry();preview?.renderNow();}));$('#geoResetBtn')?.addEventListener('click',resetGeometry);$('#geoExportBtn')?.addEventListener('click',exportGeometryJSON);
@@ -323,6 +439,7 @@ function bind(){
 loadTheme();
 bind();
 setColor(DEFAULT_COLOR,false);
+setTool('pencil');
 createStarterPixels(state.model,64);
 saveHistory();setDocMeta();setGeometryInputs();renderPalettes();renderGuide();loadLibrary();
 preview=makePreview();
