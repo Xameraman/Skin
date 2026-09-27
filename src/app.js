@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '0.8.0';
+const APP_VERSION = '0.9.1';
 const MIN_TEX = 64;
 const MAX_TEX = 1024;
 const HISTORY_LIMIT = 80;
@@ -11,11 +11,9 @@ const $ = (id) => document.getElementById(id);
 const els = {
   html: document.documentElement,
   editorCanvas: $('editorCanvas'),
-  characterCanvas: $('characterCanvas'),
   miniPreviewCanvas: $('miniPreviewCanvas'),
   canvasWrap: $('stageWrap'),
   canvasPane: $('canvasPane'),
-  characterPane: $('characterPane'),
   toolGrid: $('toolGrid'),
   layerGrid: $('layerGrid'),
   colorInput: $('colorInput'),
@@ -55,13 +53,6 @@ const els = {
   focusModalStatus: $('focusModalStatus'),
   focusApplyBtn: $('focusApplyBtn'),
   canvasFocusIndicator: $('canvasFocusIndicator'),
-  modeButtons: [...document.querySelectorAll('.mode-btn')],
-  cameraSwitch: $('cameraSwitch'),
-  cameraModeButtons: [...document.querySelectorAll('.camera-mode-btn')],
-  characterFaceReadout: $('characterFaceReadout'),
-  characterBadge: $('characterBadge'),
-  characterModeLabel: $('characterModeLabel'),
-  characterResolutionLabel: $('characterResolutionLabel'),
   themeSelect: $('themeSelect'),
   modelSelect: $('modelSelect'),
   textureSizeSelect: $('textureSizeSelect'),
@@ -118,11 +109,10 @@ const els = {
 };
 
 const editorCtx = els.editorCanvas.getContext('2d', { alpha: true });
-const charCtx = els.characterCanvas.getContext('2d', { alpha: false });
-const miniCtx = els.miniPreviewCanvas.getContext('2d', { alpha: false });
+const miniGL = els.miniPreviewCanvas.getContext('webgl', { alpha: true, antialias: false, depth: true, stencil: false, powerPreference: 'high-performance', preserveDrawingBuffer: false }) || null;
+const miniCtx = miniGL ? null : els.miniPreviewCanvas.getContext('2d', { alpha: true, willReadFrequently: false });
 editorCtx.imageSmoothingEnabled = false;
-charCtx.imageSmoothingEnabled = false;
-miniCtx.imageSmoothingEnabled = false;
+if (miniCtx) miniCtx.imageSmoothingEnabled = false;
 
 const TOOL_INFO = {
   pencil: { name: 'Pencil', help: 'Draw one clean texture pixel. Drag to make pixel lines.', tip: 'Best for eyes, hair strands, seams and tiny details.' },
@@ -138,7 +128,7 @@ const TOOL_INFO = {
 };
 
 const PART_LABELS = {
-  head: 'Head', body: 'Body', rightArm: 'Right Arm', leftArm: 'Left Arm', rightLeg: 'Right Leg', leftLeg: 'Left Leg'
+  head: 'Head', body: 'Body', rightArm: 'Right Arm / Hand', leftArm: 'Left Arm / Hand', rightLeg: 'Right Leg', leftLeg: 'Left Leg'
 };
 const FACE_LABELS = { front: 'Front', back: 'Back', left: 'Left', right: 'Right', top: 'Top', bottom: 'Bottom' };
 const FACE_ORDER = ['front', 'back', 'left', 'right', 'top', 'bottom'];
@@ -147,7 +137,6 @@ const state = {
   size: 64,
   model: 'classic',
   mode: '2d',
-  cameraMode: 'paint',
   tool: 'pencil',
   layer: 'both',
   locks: { base: false, outer: false },
@@ -175,9 +164,10 @@ const state = {
   preview: {
     yaw: -26,
     pitch: -10,
-    scale: 5.2,
+    zoom: 0.95,
     offsetX: 0,
-    offsetY: 2,
+    offsetY: 0,
+    targetY: 0,
     anim: 'idle',
     animPaused: true,
     speed: 1,
@@ -279,26 +269,28 @@ function nearestScaleLogicalBase(size) {
 
 function standardRegion(part, face, x,y,w,h,layer='base') { return {part,face,x,y,w,h,layer}; }
 function logicalMap(model='classic') {
-  const armW=model==='slim'?3:4;
+  const slim=model==='slim';
+  const rw=slim?3:4;
   return [
-    standardRegion('head','top',8,0,8,8), standardRegion('head','bottom',16,0,8,8), standardRegion('head','left',0,8,8,8), standardRegion('head','front',8,8,8,8), standardRegion('head','right',16,8,8,8), standardRegion('head','back',24,8,8,8),
-    standardRegion('body','top',20,16,8,4), standardRegion('body','bottom',28,16,8,4), standardRegion('body','left',16,20,4,12), standardRegion('body','front',20,20,8,12), standardRegion('body','right',28,20,4,12), standardRegion('body','back',32,20,8,12),
-    standardRegion('rightArm','top',44,16,armW,4), standardRegion('rightArm','bottom',48,16,armW,4), standardRegion('rightArm','left',40,20,4,12), standardRegion('rightArm','front',44,20,armW,12), standardRegion('rightArm','right',48,20,4,12), standardRegion('rightArm','back',52,20,armW,12),
-    standardRegion('leftArm','top',36,48,armW,4), standardRegion('leftArm','bottom',40,48,armW,4), standardRegion('leftArm','left',32,52,4,12), standardRegion('leftArm','front',36,52,armW,12), standardRegion('leftArm','right',40,52,4,12), standardRegion('leftArm','back',44,52,armW,12),
-    standardRegion('rightLeg','top',4,16,4,4), standardRegion('rightLeg','bottom',8,16,4,4), standardRegion('rightLeg','left',0,20,4,12), standardRegion('rightLeg','front',4,20,4,12), standardRegion('rightLeg','right',8,20,4,12), standardRegion('rightLeg','back',12,20,4,12),
-    standardRegion('leftLeg','top',20,48,4,4), standardRegion('leftLeg','bottom',24,48,4,4), standardRegion('leftLeg','left',16,52,4,12), standardRegion('leftLeg','front',20,52,4,12), standardRegion('leftLeg','right',24,52,4,12), standardRegion('leftLeg','back',28,52,4,12),
+    standardRegion('head','top',8,0,8,8), standardRegion('head','bottom',16,0,8,8), standardRegion('head','right',0,8,8,8), standardRegion('head','front',8,8,8,8), standardRegion('head','left',16,8,8,8), standardRegion('head','back',24,8,8,8),
+    standardRegion('body','top',20,16,8,4), standardRegion('body','bottom',28,16,8,4), standardRegion('body','right',16,20,4,12), standardRegion('body','front',20,20,8,12), standardRegion('body','left',28,20,4,12), standardRegion('body','back',32,20,8,12),
+    standardRegion('rightArm','top',44,16,rw,4), standardRegion('rightArm','bottom',slim?47:48,16,rw,4), standardRegion('rightArm','right',40,20,4,12), standardRegion('rightArm','front',44,20,rw,12), standardRegion('rightArm','left',slim?47:48,20,4,12), standardRegion('rightArm','back',slim?51:52,20,rw,12),
+    standardRegion('leftArm','top',36,48,rw,4), standardRegion('leftArm','bottom',slim?39:40,48,rw,4), standardRegion('leftArm','right',32,52,4,12), standardRegion('leftArm','front',36,52,rw,12), standardRegion('leftArm','left',slim?39:40,52,4,12), standardRegion('leftArm','back',slim?43:44,52,rw,12),
+    standardRegion('rightLeg','top',4,16,4,4), standardRegion('rightLeg','bottom',8,16,4,4), standardRegion('rightLeg','right',0,20,4,12), standardRegion('rightLeg','front',4,20,4,12), standardRegion('rightLeg','left',8,20,4,12), standardRegion('rightLeg','back',12,20,4,12),
+    standardRegion('leftLeg','top',20,48,4,4), standardRegion('leftLeg','bottom',24,48,4,4), standardRegion('leftLeg','right',16,52,4,12), standardRegion('leftLeg','front',20,52,4,12), standardRegion('leftLeg','left',24,52,4,12), standardRegion('leftLeg','back',28,52,4,12),
   ];
 }
 
 function outerMap(model='classic') {
-  const armW=model==='slim'?3:4;
+  const slim=model==='slim';
+  const rw=slim?3:4;
   return [
-    standardRegion('head','top',40,0,8,8,'outer'), standardRegion('head','bottom',48,0,8,8,'outer'), standardRegion('head','left',32,8,8,8,'outer'), standardRegion('head','front',40,8,8,8,'outer'), standardRegion('head','right',48,8,8,8,'outer'), standardRegion('head','back',56,8,8,8,'outer'),
-    standardRegion('body','top',20,32,8,4,'outer'), standardRegion('body','bottom',28,32,8,4,'outer'), standardRegion('body','left',16,36,4,12,'outer'), standardRegion('body','front',20,36,8,12,'outer'), standardRegion('body','right',28,36,4,12,'outer'), standardRegion('body','back',32,36,8,12,'outer'),
-    standardRegion('rightArm','top',44,32,armW,4,'outer'), standardRegion('rightArm','bottom',48,32,armW,4,'outer'), standardRegion('rightArm','left',40,36,4,12,'outer'), standardRegion('rightArm','front',44,36,armW,12,'outer'), standardRegion('rightArm','right',48,36,4,12,'outer'), standardRegion('rightArm','back',52,36,armW,12,'outer'),
-    standardRegion('leftArm','top',36,48,armW,4,'outer'), standardRegion('leftArm','bottom',40,48,armW,4,'outer'), standardRegion('leftArm','left',32,52,4,12,'outer'), standardRegion('leftArm','front',36,52,armW,12,'outer'), standardRegion('leftArm','right',40,52,4,12,'outer'), standardRegion('leftArm','back',44,52,armW,12,'outer'),
-    standardRegion('rightLeg','top',4,32,4,4,'outer'), standardRegion('rightLeg','bottom',8,32,4,4,'outer'), standardRegion('rightLeg','left',0,36,4,12,'outer'), standardRegion('rightLeg','front',4,36,4,12,'outer'), standardRegion('rightLeg','right',8,36,4,12,'outer'), standardRegion('rightLeg','back',12,36,4,12,'outer'),
-    standardRegion('leftLeg','top',20,48,4,4,'outer'), standardRegion('leftLeg','bottom',24,48,4,4,'outer'), standardRegion('leftLeg','left',16,52,4,12,'outer'), standardRegion('leftLeg','front',20,52,4,12,'outer'), standardRegion('leftLeg','right',24,52,4,12,'outer'), standardRegion('leftLeg','back',28,52,4,12,'outer'),
+    standardRegion('head','top',40,0,8,8,'outer'), standardRegion('head','bottom',48,0,8,8,'outer'), standardRegion('head','right',32,8,8,8,'outer'), standardRegion('head','front',40,8,8,8,'outer'), standardRegion('head','left',48,8,8,8,'outer'), standardRegion('head','back',56,8,8,8,'outer'),
+    standardRegion('body','top',20,32,8,4,'outer'), standardRegion('body','bottom',28,32,8,4,'outer'), standardRegion('body','right',16,36,4,12,'outer'), standardRegion('body','front',20,36,8,12,'outer'), standardRegion('body','left',28,36,4,12,'outer'), standardRegion('body','back',32,36,8,12,'outer'),
+    standardRegion('rightArm','top',44,32,rw,4,'outer'), standardRegion('rightArm','bottom',slim?47:48,32,rw,4,'outer'), standardRegion('rightArm','right',40,36,4,12,'outer'), standardRegion('rightArm','front',44,36,rw,12,'outer'), standardRegion('rightArm','left',slim?47:48,36,4,12,'outer'), standardRegion('rightArm','back',slim?51:52,36,rw,12,'outer'),
+    standardRegion('leftArm','top',slim?52:52,48,rw,4,'outer'), standardRegion('leftArm','bottom',slim?55:56,48,rw,4,'outer'), standardRegion('leftArm','right',48,52,4,12,'outer'), standardRegion('leftArm','front',52,52,rw,12,'outer'), standardRegion('leftArm','left',slim?55:56,52,4,12,'outer'), standardRegion('leftArm','back',slim?59:60,52,rw,12,'outer'),
+    standardRegion('rightLeg','top',4,32,4,4,'outer'), standardRegion('rightLeg','bottom',8,32,4,4,'outer'), standardRegion('rightLeg','right',0,36,4,12,'outer'), standardRegion('rightLeg','front',4,36,4,12,'outer'), standardRegion('rightLeg','left',8,36,4,12,'outer'), standardRegion('rightLeg','back',12,36,4,12,'outer'),
+    standardRegion('leftLeg','top',4,48,4,4,'outer'), standardRegion('leftLeg','bottom',8,48,4,4,'outer'), standardRegion('leftLeg','right',0,52,4,12,'outer'), standardRegion('leftLeg','front',4,52,4,12,'outer'), standardRegion('leftLeg','left',8,52,4,12,'outer'), standardRegion('leftLeg','back',12,52,4,12,'outer'),
   ];
 }
 
@@ -330,6 +322,9 @@ function canEditPixel(x,y) {
   if(!layer) return true;
   if(layer==='base' && state.locks.base) return false;
   if(layer==='outer' && state.locks.outer) return false;
+  if(state.focus.locked && focusBounds){
+    if(x < focusBounds.x || y < focusBounds.y || x >= focusBounds.x + focusBounds.w || y >= focusBounds.y + focusBounds.h) return false;
+  }
   if(state.layer==='both') return true;
   return state.layer===layer;
 }
@@ -353,9 +348,20 @@ function checkerPattern(ctx,w,h,cell=16) {
 function resizeCanvas(canvas) {
   const rect=canvas.getBoundingClientRect(); const dpr=Math.min(devicePixelRatio||1,DPR_CAP); const w=Math.max(1,Math.round(rect.width*dpr)),h=Math.max(1,Math.round(rect.height*dpr));
   if(canvas.width!==w||canvas.height!==h){ canvas.width=w;canvas.height=h; }
-  const c=canvas===els.editorCanvas?editorCtx:canvas===els.characterCanvas?charCtx:miniCtx;
-  c.imageSmoothingEnabled=false; c.setTransform(dpr,0,0,dpr,0,0);
+  const c=canvas===els.editorCanvas?editorCtx:miniCtx;
+  if(c){ c.imageSmoothingEnabled=false; c.setTransform(dpr,0,0,dpr,0,0); }
   return {w:rect.width,h:rect.height,dpr};
+}
+
+function resizePreviewCanvas(){
+  const rect=els.miniPreviewCanvas.getBoundingClientRect();
+  const dpr=Math.min(devicePixelRatio||1,2);
+  const w=Math.max(220,Math.round(rect.width*dpr)), h=Math.max(180,Math.round(rect.height*dpr));
+  if(els.miniPreviewCanvas.width!==w || els.miniPreviewCanvas.height!==h){
+    els.miniPreviewCanvas.width=w; els.miniPreviewCanvas.height=h;
+    if(miniGL) miniGL.viewport(0,0,w,h);
+  }
+  return {w,h,dpr,cssW:rect.width,cssH:rect.height};
 }
 
 function fitEditorView() {
@@ -418,7 +424,7 @@ function pushHistory(){
   if(prev&&prev.size===snap.size&&prev.model===snap.model&&prev.pixels.every((v,i)=>v===snap.pixels[i])) return;
   state.history.push(snap);if(state.history.length>HISTORY_LIMIT)state.history.shift();state.historyIndex=state.history.length-1;updateHistoryButtons();
 }
-function restoreSnapshot(snap){ if(!snap)return;state.size=snap.size;state.model=snap.model;state.pixels=new Uint8ClampedArray(snap.pixels); syncSelectors();rebuildTextureCanvas();fitEditorView();render3D(true);renderChecks(); }
+function restoreSnapshot(snap){ if(!snap)return;state.size=snap.size;state.model=snap.model;state.pixels=new Uint8ClampedArray(snap.pixels); syncSelectors();createTextureCanvas();focusBounds=state.focus.part&&state.focus.face?getFocusRegion(state.focus.part,state.focus.face,'base'):null;previewRenderer.setModel();previewRenderer.setTexture();fitEditorView();render3D();renderChecks(); }
 function undo(){ if(state.historyIndex<=0)return; state.historyIndex--;restoreSnapshot(state.history[state.historyIndex]);toast('Undo'); }
 function redo(){ if(state.historyIndex>=state.history.length-1)return; state.historyIndex++;restoreSnapshot(state.history[state.historyIndex]);toast('Redo'); }
 function updateHistoryButtons(){ els.undoBtn.disabled=state.historyIndex<=0;els.redoBtn.disabled=state.historyIndex>=state.history.length-1; }
@@ -465,12 +471,12 @@ function finishStroke(){ if(state.drawing){state.drawing=false;state.shapeStart=
 
 function paintAt(x,y){
   updateCursorReadout(x,y); if(!inside(x,y))return;
-  if(state.tool==='picker'){setColor('#'+rgbaToHex(...getPixel(x,y).slice(0,3))); state.tool='pencil';updateToolUI();return;}
+  if(state.tool==='picker'){setColor('#'+rgbaToHex(...getPixel(x,y).slice(0,3))); setTool('pencil');return;}
   if(state.tool==='fill'){if(!state.drawing)beginStroke();floodFill(x,y);renderEditor();finishStroke();return;}
   if(state.tool==='replace'){if(!state.drawing)beginStroke();replaceColors(getPixel(x,y));renderEditor();finishStroke();return;}
   if(state.tool==='line'||state.tool==='rect'||state.tool==='circle'){ if(!state.shapeStart){state.shapeStart={x,y}; if(!state.drawing)beginStroke();} else { const sx=state.shapeStart.x,sy=state.shapeStart.y; drawPreviewShape(sx,sy,x,y); } return; }
   if(!state.drawing)beginStroke();
-  stampBrush(x,y);renderEditor();syncMiniPreview();scheduleCharacterFrame();
+  stampBrush(x,y);renderEditor();scheduleCharacterFrame();
 }
 function drawPreviewShape(x0,y0,x1,y1){
   if(!state.strokeSnapshot)return;state.pixels=new Uint8ClampedArray(state.strokeSnapshot.pixels);let pts=[];
@@ -480,42 +486,69 @@ function drawPreviewShape(x0,y0,x1,y1){
   drawShapePoints(pts);state.tempShape={x0,y0,x1,y1};renderEditor();scheduleCharacterFrame();
 }
 
+function activatePendingSingle(){
+  const p=state.pendingPointer; if(!p||state.pointerMap.size!==1)return;
+  const pt=state.pointerMap.get(p.id); if(!pt)return;
+  state.pendingPointer=null;
+  const tex=screenToTex(pt.x,pt.y); updateCursorReadout(tex.x,tex.y); paintAt(tex.x,tex.y);
+  if(state.drawing)state._touchPaintActivated=true;
+}
 function handleEditorPointerDown(ev){
   ev.preventDefault();
-  const rect=els.editorCanvas.getBoundingClientRect();const pt={x:ev.clientX,y:ev.clientY};state.pointerMap.set(ev.pointerId,pt);els.editorCanvas.setPointerCapture(ev.pointerId);
-  if(state.pointerMap.size>=2){
-    cancelPendingSingle(); beginTouchGesture(); return;
+  const pt={x:ev.clientX,y:ev.clientY};state.pointerMap.set(ev.pointerId,pt);els.editorCanvas.setPointerCapture(ev.pointerId);
+  if(state.pointerMap.size>=2){ cancelPendingSingle(); beginTouchGesture(); return; }
+  if(ev.pointerType==='touch'){
+    state.pendingPointer={id:ev.pointerId,startX:ev.clientX,startY:ev.clientY,timer:setTimeout(activatePendingSingle,75)};
+    const tex=screenToTex(ev.clientX,ev.clientY);updateCursorReadout(tex.x,tex.y);return;
   }
-  if(ev.pointerType==='touch') state.pendingPointer={id:ev.pointerId,startedAt:now()};
   const tex=screenToTex(ev.clientX,ev.clientY); updateCursorReadout(tex.x,tex.y);paintAt(tex.x,tex.y);
 }
+
 function handleEditorPointerMove(ev){
   if(!state.pointerMap.has(ev.pointerId))return; state.pointerMap.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
   if(state.gesture){updateTouchGesture();return;}
+  if(state.pendingPointer&&state.pendingPointer.id===ev.pointerId){
+    const moved=Math.hypot(ev.clientX-state.pendingPointer.startX,ev.clientY-state.pendingPointer.startY);
+    if(moved>=4){clearTimeout(state.pendingPointer.timer);activatePendingSingle();}
+    else return;
+  }
   const tex=screenToTex(ev.clientX,ev.clientY);updateCursorReadout(tex.x,tex.y);
   if(state.drawing && !['fill','replace','picker'].includes(state.tool)){
     if(state.shapeStart && ['line','rect','circle'].includes(state.tool)) drawPreviewShape(state.shapeStart.x,state.shapeStart.y,tex.x,tex.y);
     else { stampBrush(tex.x,tex.y);renderEditor();scheduleCharacterFrame(); }
   }
 }
-function handleEditorPointerUp(ev){ state.pointerMap.delete(ev.pointerId);try{els.editorCanvas.releasePointerCapture(ev.pointerId);}catch{} if(state.gesture){ if(state.pointerMap.size<2)state.gesture=null; return; } if(['line','rect','circle'].includes(state.tool)&&state.shapeStart){ finishStroke(); } else finishStroke(); state.pendingPointer=null; }
+function handleEditorPointerUp(ev){
+  if(state.pendingPointer&&state.pendingPointer.id===ev.pointerId){clearTimeout(state.pendingPointer.timer);state.pendingPointer=null;}
+  state.pointerMap.delete(ev.pointerId);try{els.editorCanvas.releasePointerCapture(ev.pointerId);}catch{}
+  if(state.gesture){ if(state.pointerMap.size<2)state.gesture=null; return; }
+  finishStroke();state.pendingPointer=null;
+}
 function handleEditorWheel(ev){ ev.preventDefault();const rect=els.editorCanvas.getBoundingClientRect();const cx=ev.clientX-rect.left,cy=ev.clientY-rect.top;setEditorZoom(editorView.pixelSize*(ev.deltaY<0?1.15:.87),cx,cy); }
 function beginTouchGesture(){
   const pts=[...state.pointerMap.values()];if(pts.length<2)return;const a=pts[0],b=pts[1],m=midpoint(a,b);state.gesture={startMid:m,startDist:dist(a,b),startZoom:editorView.pixelSize,startX:editorView.x,startY:editorView.y,rect:els.editorCanvas.getBoundingClientRect()};
   if(state.drawing){state.pixels=state.strokeSnapshot?new Uint8ClampedArray(state.strokeSnapshot.pixels):state.pixels;state.drawing=false;state.strokeSnapshot=null;state.shapeStart=null;renderEditor();}
 }
 function updateTouchGesture(){const pts=[...state.pointerMap.values()];if(pts.length<2||!state.gesture)return;const a=pts[0],b=pts[1],m=midpoint(a,b),g=state.gesture;const scale=dist(a,b)/Math.max(1,g.startDist);const nextZoom=clamp(g.startZoom*scale,1,40);const localStartX=g.startMid.x-g.rect.left,localStartY=g.startMid.y-g.rect.top;const localNowX=m.x-g.rect.left,localNowY=m.y-g.rect.top;const tx=(localStartX-g.startX)/g.startZoom,ty=(localStartY-g.startY)/g.startZoom;editorView.pixelSize=nextZoom;editorView.x=localNowX-tx*nextZoom;editorView.y=localNowY-ty*nextZoom;renderEditor();}
-function cancelPendingSingle(){state.pendingPointer=null;}
+function cancelPendingSingle(){if(state.pendingPointer?.timer)clearTimeout(state.pendingPointer.timer);state.pendingPointer=null;}
 
 function focusOn(part,face,lock=false){
-  const r=getFocusRegion(part,face,'both')||getFocusRegion(part,'front','both');if(!r)return;
-  state.focus.part=part;state.focus.face=face||'front';state.focus.locked=lock;focusBounds=r;
-  const rect=els.editorCanvas.getBoundingClientRect();const pad=80;const z=clamp(Math.floor(Math.min((rect.width-pad*2)/Math.max(1,r.w),(rect.height-pad*2)/Math.max(1,r.h))),2,40);editorView.pixelSize=z;const dw=state.size*z;editorView.x=(rect.width-dw)/2 - (r.x+r.w/2-state.size/2)*z;editorView.y=(rect.height-dw)/2 - (r.y+r.h/2-state.size/2)*z;
-  els.focusStatus.textContent=`${PART_LABELS[part]} · ${FACE_LABELS[state.focus.face]}`;els.focusLockBtn.textContent=state.focus.locked?'🔒 Unlock':'🔓 Lock';els.focusMeta.hidden=false;els.focusMeta.textContent=`· ${PART_LABELS[part]} / ${FACE_LABELS[state.focus.face]}`;renderEditor();renderFocusModalState();
-  // Align the 3D camera toward the selected face.
-  setCameraForFace(face);
+  const r=getFocusRegion(part,face,'base')||getFocusRegion(part,face,'both')||getFocusRegion(part,'front','base');if(!r)return;
+  state.focus.part=part;state.focus.face=face||'front';state.focus.locked=lock;focusBounds={...r};
+  const rect=els.editorCanvas.getBoundingClientRect();
+  const maxZoomByW=Math.max(1,(rect.width*0.72)/Math.max(1,r.w));
+  const maxZoomByH=Math.max(1,(rect.height*0.72)/Math.max(1,r.h));
+  const z=clamp(Math.floor(Math.min(maxZoomByW,maxZoomByH)),2,40);
+  const targetX=r.x+r.w/2,targetY=r.y+r.h/2;
+  editorView.pixelSize=z;
+  editorView.x=rect.width/2-targetX*z;
+  editorView.y=rect.height/2-targetY*z;
+  els.focusStatus.textContent=`${PART_LABELS[part]} · ${FACE_LABELS[state.focus.face]}`;
+  els.focusLockBtn.textContent=state.focus.locked?'🔒 Unlock':'🔓 Lock';
+  els.focusMeta.hidden=false;els.focusMeta.textContent=`· ${PART_LABELS[part]} / ${FACE_LABELS[state.focus.face]}`;
+  renderEditor();renderFocusModalState();
 }
-function toggleFocusLock(){if(!state.focus.part){toast('Choose a focus area first.');return;}state.focus.locked=!state.focus.locked;els.focusLockBtn.textContent=state.focus.locked?'🔒 Unlock':'🔓 Lock';toast(state.focus.locked?'Focus locked':'Focus unlocked');}
+function toggleFocusLock(){if(!state.focus.part){toast('Choose a focus area first.');return;}state.focus.locked=!state.focus.locked;els.focusLockBtn.textContent=state.focus.locked?'🔒 Unlock':'🔓 Lock';renderEditor();toast(state.focus.locked?'Focus locked: painting is limited to the highlighted region.':'Focus unlocked');}
 function renderFocusModal(){
   els.focusPartGrid.innerHTML=Object.entries(PART_LABELS).map(([key,label])=>`<button class="focus-part-btn" data-part="${key}">${label}</button>`).join('');els.focusPartGrid.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{state._focusPart=b.dataset.part;renderFocusModalState();}));
   els.focusFaceGrid.innerHTML=FACE_ORDER.map(face=>`<button class="focus-face-btn" data-face="${face}">${FACE_LABELS[face]}</button>`).join('');els.focusFaceGrid.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{if(!state._focusPart){toast('Choose a body part first.');return;}state._focusFace=b.dataset.face;renderFocusModalState();}));
@@ -524,8 +557,7 @@ function renderFocusModalState(){els.focusPartGrid.querySelectorAll('button').fo
 function openFocusModal(){state._focusPart=state.focus.part||'head';state._focusFace=state.focus.face||'front';renderFocusModalState();els.focusModal.hidden=false;}
 function applyFocus(){if(state._focusPart&&state._focusFace){focusOn(state._focusPart,state._focusFace,state.focus.locked);els.focusModal.hidden=true;}}
 
-function setMode(mode){state.mode=mode;els.modeButtons.forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));els.canvasPane.hidden=mode!=='2d';els.canvasPane.classList.toggle('active',mode==='2d');els.characterPane.hidden=mode!=='3d';els.characterPane.classList.toggle('active',mode==='3d');els.cameraSwitch.hidden=mode!=='3d';els.gestureHint.textContent=mode==='2d'?'1 finger paints · 2 fingers pan/zoom':(state.cameraMode==='paint'?'Tap/drag paints · 2 fingers camera':'Drag to orbit · 2 fingers pan/zoom');if(mode==='3d')render3D(true); else renderEditor();}
-function setCameraMode(mode){state.cameraMode=mode;els.cameraModeButtons.forEach(b=>b.classList.toggle('active',b.dataset.cameraMode===mode));els.gestureHint.textContent=state.mode==='3d'?(mode==='paint'?'Tap/drag paints · 2 fingers camera':'Drag to orbit · 2 fingers pan/zoom'):'1 finger paints · 2 fingers pan/zoom';}
+function setMode(mode){ state.mode='2d'; renderEditor(); }
 function setTool(tool){state.tool=tool;els.toolGrid.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));const info=TOOL_INFO[tool];els.toolHelpTitle.textContent=info.name;els.toolHelpText.textContent=info.help;els.toolHelpTip.textContent=`Tip: ${info.tip}`;els.activeToolLabel.textContent=info.name; if(tool==='pencil'||tool==='eraser'||tool==='shade'||tool==='picker') els.brushSize.value='1';updateControlLabels();}
 function setLayer(layer){state.layer=layer;els.layerGrid.querySelectorAll('[data-layer]').forEach(b=>b.classList.toggle('active',b.dataset.layer===layer));els.layerContext.textContent=layer==='both'?'Both layers':layer==='base'?'Base layer':'Outer layer';}
 function toggleLock(layer){state.locks[layer]=!state.locks[layer];const b=layer==='base'?els.layerLockBase:els.layerLockOuter;b.textContent=state.locks[layer]?'🔒 '+(layer==='base'?'Base':'Outer'):'🔓 '+(layer==='base'?'Base':'Outer');}
@@ -533,210 +565,154 @@ function updateControlLabels(){els.brushSizeValue.textContent=`${els.brushSize.v
 
 function drawCheckerMini(ctx,w,h){ctx.fillStyle='#11151b';ctx.fillRect(0,0,w,h);ctx.fillStyle='#1b2028';for(let y=0;y<h;y+=12)for(let x=0;x<w;x+=12)if(((x/12)+(y/12))%2===0)ctx.fillRect(x,y,12,12);}
 
-// ---------- 3D SOFTWARE RENDERER ----------
-const V = (x,y,z)=>({x,y,z});
-const add=(a,b)=>V(a.x+b.x,a.y+b.y,a.z+b.z);
-const sub=(a,b)=>V(a.x-b.x,a.y-b.y,a.z-b.z);
-const mul=(a,s)=>V(a.x*s,a.y*s,a.z*s);
-function rotatePoint(p,pivot,rx,ry,rz=0){
-  let x=p.x-pivot.x,y=p.y-pivot.y,z=p.z-pivot.z;
-  const cx=Math.cos(rx),sx=Math.sin(rx),cy=Math.cos(ry),sy=Math.sin(ry),cz=Math.cos(rz),sz=Math.sin(rz);
-  let y1=y*cx-z*sx,z1=y*sx+z*cx;y=y1;z=z1;
-  let x1=x*cy+z*sy,z2=-x*sy+z*cy;x=x1;z=z2;
-  let x2=x*cz-y*sz,y2=x*sz+y*cz;x=x2;y=y2;
-  return V(x+pivot.x,y+pivot.y,z+pivot.z);
+// ---------- 3D PREVIEW (read-only, hardware accelerated with safe canvas fallback) ----------
+// The preview is deliberately read-only. All actual editing happens on the 2D skin canvas.
+// Standard skin UV coordinates are defined once in logicalMap()/outerMap() and scale by texture density.
+function mat4Identity(){return new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);}
+function mat4Multiply(a,b){const o=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++)o[c*4+r]=a[r]*b[c*4]+a[4+r]*b[c*4+1]+a[8+r]*b[c*4+2]+a[12+r]*b[c*4+3];return o;}
+function mat4Translate(x,y,z){const m=mat4Identity();m[12]=x;m[13]=y;m[14]=z;return m;}
+function mat4Scale(x,y,z){const m=mat4Identity();m[0]=x;m[5]=y;m[10]=z;return m;}
+function mat4RotateX(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([1,0,0,0,0,c,s,0,0,-s,c,0,0,0,0,1]);}
+function mat4RotateY(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([c,0,-s,0,0,1,0,0,s,0,c,0,0,0,0,1]);}
+function mat4Perspective(fov,aspect,near,far){const f=1/Math.tan(fov/2),nf=1/(near-far),m=new Float32Array(16);m[0]=f/aspect;m[5]=f;m[10]=(far+near)*nf;m[11]=-1;m[14]=2*far*near*nf;return m;}
+function mat4LookAt(eye,center,up){let zx=eye[0]-center[0],zy=eye[1]-center[1],zz=eye[2]-center[2],len=Math.hypot(zx,zy,zz)||1;zx/=len;zy/=len;zz/=len;let xx=up[1]*zz-up[2]*zy,xy=up[2]*zx-up[0]*zz,xz=up[0]*zy-up[1]*zx;len=Math.hypot(xx,xy,xz)||1;xx/=len;xy/=len;xz/=len;const yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;return new Float32Array([xx,yx,zx,0,xy,yy,zy,0,xz,yz,zz,0,-(xx*eye[0]+xy*eye[1]+xz*eye[2]),-(yx*eye[0]+yy*eye[1]+yz*eye[2]),-(zx*eye[0]+zy*eye[1]+zz*eye[2]),1]);}
+function previewUV(region,size=state.size){const sx=region.x/64,sy=region.y/64,sw=region.w/64,sh=region.h/64;return [sx,1-(sy+sh),sx+sw,1-sy];}
+function createPreviewShader(gl,type,src){const sh=gl.createShader(type);gl.shaderSource(sh,src);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(sh)||'Shader compile error');return sh;}
+function createPreviewProgram(gl){
+  const vs=createPreviewShader(gl,gl.VERTEX_SHADER,`attribute vec3 aPosition;attribute vec2 aUV;attribute vec3 aNormal;uniform mat4 uMVP;uniform mat4 uModel;varying vec2 vUV;varying vec3 vNormal;void main(){vUV=aUV;vNormal=(uModel*vec4(aNormal,0.0)).xyz;gl_Position=uMVP*uModel*vec4(aPosition,1.0);}`);
+  const fs=createPreviewShader(gl,gl.FRAGMENT_SHADER,`precision mediump float;uniform sampler2D uTexture;varying vec2 vUV;varying vec3 vNormal;void main(){vec4 c=texture2D(uTexture,vUV);if(c.a<0.02)discard;vec3 l=normalize(vec3(-0.35,0.8,0.55));float ndl=max(dot(normalize(vNormal),l),0.0);float shade=0.68+ndl*0.32;gl_FragColor=vec4(c.rgb*shade,c.a);}`);
+  const p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p)||'Program link error');return p;
 }
-function partBox(name,minX,maxX,minY,maxY,minZ,maxZ,pivot,rotKey){
-  return {name,minX,maxX,minY,maxY,minZ,maxZ,pivot,rotKey};
+function addPreviewFace(data,p0,p1,p2,p3,region,normal){
+  const base=data.positions.length/3;for(const p of [p0,p1,p2,p3])data.positions.push(...p);const [u0,v0,u1,v1]=previewUV(region);data.uvs.push(u0,v0,u1,v0,u1,v1,u0,v1);for(let i=0;i<4;i++)data.normals.push(...normal);data.indices.push(base,base+1,base+2,base,base+2,base+3);
 }
-function buildParts(animT=0){
-  const walk=state.preview.anim==='walk'&&!state.preview.animPaused;
-  const phase=animT*state.preview.speed*0.004;
-  const swing=walk?Math.sin(phase)*0.55:0;
-  const body=partBox('body',-4,4,12,24,-2,2,V(0,12,0),'body');
-  const head=partBox('head',-4,4,24,32,-4,4,V(0,24,0),'head');
-  const armW=state.model==='slim'?3:4;
-  const rightArm=partBox('rightArm',-4-armW,-4,12,24,-2,2,V(-4,24,0),'rightArm');
-  const leftArm=partBox('leftArm',4,4+armW,12,24,-2,2,V(4,24,0),'leftArm');
-  const rightLeg=partBox('rightLeg',-4,0,0,12,-2,2,V(-2,12,0),'rightLeg');
-  const leftLeg=partBox('leftLeg',0,4,0,12,-2,2,V(2,12,0),'leftLeg');
-  const rmap=state.preview.anim==='walk'&&!state.preview.animPaused? swing:0;
-  return [
-    {...head,rx:0},
-    {...body,rx:0},
-    {...rightArm,rx:rmap,rz:0},
-    {...leftArm,rx:-rmap,rz:0},
-    {...rightLeg,rx:-rmap,rz:0},
-    {...leftLeg,rx:rmap,rz:0},
+function buildCubeGeometry(name,size,pivotOffset,inflate,regions){
+  const w=size[0]+inflate,h=size[1]+inflate,d=size[2]+inflate,hx=w/2,hy=h/2,hz=d/2,px=0,py=0,pz=0;const data={positions:[],uvs:[],normals:[],indices:[]};
+  addPreviewFace(data,[-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz],regions.front,[0,0,1]);
+  addPreviewFace(data,[hx,-hy,-hz],[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz],regions.back,[0,0,-1]);
+  addPreviewFace(data,[hx,-hy,hz],[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz],regions.right,[1,0,0]);
+  addPreviewFace(data,[-hx,-hy,-hz],[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz],regions.left,[-1,0,0]);
+  addPreviewFace(data,[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz],[-hx,hy,-hz],regions.top,[0,1,0]);
+  addPreviewFace(data,[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[-hx,-hy,hz],regions.bottom,[0,-1,0]);
+  return {name,size,pivotOffset,inflate,data};
+}
+function buildPreviewParts(){
+  const armW=state.model==='slim'?3:4;const armX=4+armW/2;const base=logicalMap(state.model),outer=outerMap(state.model);const pick=(map,part,face)=>map.find(r=>r.part===part&&r.face===face);const regionsFor=(map,part)=>({front:pick(map,part,'front'),back:pick(map,part,'back'),right:pick(map,part,'right'),left:pick(map,part,'left'),top:pick(map,part,'top'),bottom:pick(map,part,'bottom')});
+  const parts=[
+    {name:'head',center:[0,12,0],size:[8,8,8],pivotOffset:[0,0,0],swingAxis:'none'},
+    {name:'body',center:[0,2,0],size:[8,12,4],pivotOffset:[0,0,0],swingAxis:'none'},
+    {name:'rightArm',center:[-armX,2,0],size:[armW,12,4],pivotOffset:[0,6,0],swingAxis:'arm'},
+    {name:'leftArm',center:[armX,2,0],size:[armW,12,4],pivotOffset:[0,6,0],swingAxis:'arm'},
+    {name:'rightLeg',center:[-2,-10,0],size:[4,12,4],pivotOffset:[0,6,0],swingAxis:'leg'},
+    {name:'leftLeg',center:[2,-10,0],size:[4,12,4],pivotOffset:[0,6,0],swingAxis:'leg'},
   ];
+  for(const p of parts){p.base=buildCubeGeometry(p.name,p.size,p.pivotOffset,0,regionsFor(base,p.name));p.outer=buildCubeGeometry(p.name,p.size,p.pivotOffset,0.5,regionsFor(outer,p.name));}
+  return parts;
 }
-function transformLocal(part,p){return rotatePoint(p,part.pivot,part.rx||0,part.ry||0,part.rz||0);}
-function project3D(p,w,h){
-  const yaw=state.preview.yaw*Math.PI/180,pitch=state.preview.pitch*Math.PI/180;
-  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
-  const x1=p.x*cy+p.z*sy;const z1=-p.x*sy+p.z*cy;const y1=p.y*cp-z1*sp;const z2=p.y*sp+z1*cp;
-  const scale=state.preview.scale*(Math.min(w,h)/420);
-  const persp=1/(1+z2/90);return {x:w/2+x1*scale*persp+state.preview.offsetX,y:h/2-y1*scale*persp+state.preview.offsetY,depth:z2};
+function createPreviewBuffer(gl,data){const b={pos:gl.createBuffer(),uv:gl.createBuffer(),nrm:gl.createBuffer(),idx:gl.createBuffer(),count:data.indices.length};gl.bindBuffer(gl.ARRAY_BUFFER,b.pos);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data.positions),gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,b.uv);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data.uvs),gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,b.nrm);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data.normals),gl.STATIC_DRAW);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,b.idx);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(data.indices),gl.STATIC_DRAW);return b;}
+function previewThemeColor(){const css=getComputedStyle(document.documentElement);const hex=css.getPropertyValue('--preview-bg').trim()||'#0c1016';const m=hex.match(/^#([0-9a-f]{6})$/i);if(!m)return [0.047,0.063,0.086];const n=parseInt(m[1],16);return [((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255];}
+function svAdd(a,b){return {x:a.x+b.x,y:a.y+b.y,z:a.z+b.z};}
+function svSub(a,b){return {x:a.x-b.x,y:a.y-b.y,z:a.z-b.z};}
+function svMul(a,s){return {x:a.x*s,y:a.y*s,z:a.z*s};}
+function svDot(a,b){return a.x*b.x+a.y*b.y+a.z*b.z;}
+function svCross(a,b){return {x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x};}
+function svNorm(a){const l=Math.hypot(a.x,a.y,a.z)||1;return {x:a.x/l,y:a.y/l,z:a.z/l};}
+function svRotateX(p,a){const c=Math.cos(a),s=Math.sin(a);return {x:p.x,y:p.y*c-p.z*s,z:p.y*s+p.z*c};}
+function softwareFaceCorners(part,face,inflate=0){
+  const w=part.size[0]+inflate,h=part.size[1]+inflate,d=part.size[2]+inflate,hx=w/2,hy=h/2,hz=d/2;
+  const c={};
+  const faceVerts={
+    front:[[-hx,hy,hz],[hx,hy,hz],[hx,-hy,hz],[-hx,-hy,hz]],
+    back:[[hx,hy,-hz],[-hx,hy,-hz],[-hx,-hy,-hz],[hx,-hy,-hz]],
+    right:[[hx,hy,hz],[hx,hy,-hz],[hx,-hy,-hz],[hx,-hy,hz]],
+    left:[[-hx,hy,-hz],[-hx,hy,hz],[-hx,-hy,hz],[-hx,-hy,-hz]],
+    top:[[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz],[-hx,hy,-hz]],
+    bottom:[[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[-hx,-hy,hz]],
+  }[face]||[];
+  const rx=part.swingAxis==='arm'?(part.name==='rightArm'?Math.sin(performance.now()*0.0045*state.preview.speed)*0.48: -Math.sin(performance.now()*0.0045*state.preview.speed)*0.48):part.swingAxis==='leg'?(part.name==='rightLeg'?-Math.sin(performance.now()*0.0045*state.preview.speed)*0.48:Math.sin(performance.now()*0.0045*state.preview.speed)*0.48):0;
+  const walking=state.preview.anim==='walk'&&!state.preview.animPaused; const angle=walking?rx:0;
+  return faceVerts.map(v=>{let p={x:v[0],y:v[1],z:v[2]};p=svSub(p,{x:part.pivotOffset[0],y:part.pivotOffset[1],z:part.pivotOffset[2]});p=svRotateX(p,angle);p=svAdd(p,{x:part.pivotOffset[0]+part.center[0],y:part.pivotOffset[1]+part.center[1],z:part.pivotOffset[2]+part.center[2]});return p;});
 }
-function faceCorners(part,face,expand=0){
-  const x0=part.minX-expand,x1=part.maxX+expand,y0=part.minY-expand,y1=part.maxY+expand,z0=part.minZ-expand,z1=part.maxZ+expand;
-  let c;
-  if(face==='front')c=[V(x0,y1,z1),V(x1,y1,z1),V(x1,y0,z1),V(x0,y0,z1)];
-  else if(face==='back')c=[V(x1,y1,z0),V(x0,y1,z0),V(x0,y0,z0),V(x1,y0,z0)];
-  else if(face==='left')c=[V(x0,y1,z0),V(x0,y1,z1),V(x0,y0,z1),V(x0,y0,z0)];
-  else if(face==='right')c=[V(x1,y1,z1),V(x1,y1,z0),V(x1,y0,z0),V(x1,y0,z1)];
-  else if(face==='top')c=[V(x0,y1,z0),V(x1,y1,z0),V(x1,y1,z1),V(x0,y1,z1)];
-  else c=[V(x0,y0,z1),V(x1,y0,z1),V(x1,y0,z0),V(x0,y0,z0)];
-  return c.map(p=>transformLocal(part,p));
-}
-function faceNormal(face){ const n={front:V(0,0,1),back:V(0,0,-1),left:V(-1,0,0),right:V(1,0,0),top:V(0,1,0),bottom:V(0,-1,0)}[face];return n; }
-function uvRect(partName,face,layer='base'){
-  const all=skinMap(state.model,state.size,layer);return all.find(r=>r.part===partName&&r.face===face)||null;
-}
-function sampleTextureRect(r,tx,ty){
-  const x=clamp(Math.floor(tx),0,state.size-1),y=clamp(Math.floor(ty),0,state.size-1);return getPixel(x,y);}
-function faceGridSteps(region){
-  if(!region)return {cols:1,rows:1,stepX:1,stepY:1};
-  const baseW=region.w/(state.size/64),baseH=region.h/(state.size/64); // logical face dimensions
-  let pxStep=1;
-  const scale=state.size/64;
-  if(scale>2) pxStep=Math.ceil(scale/2);
-  const cols=Math.ceil(region.w/pxStep),rows=Math.ceil(region.h/pxStep);
-  return {cols,rows,stepX:pxStep,stepY:pxStep};
-}
-function bilerp(c,u,v){
-  const a=add(mul(c[0],(1-u)*(1-v)),add(mul(c[1],u*(1-v)),add(mul(c[2],u*v),mul(c[3],(1-u)*v))));return a;
-}
-function avgDepth(points){return points.reduce((s,p)=>s+p.depth,0)/points.length;}
-function faceVisible(projected){ const a=projected[0],b=projected[1],c=projected[2];return ((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x))>0; }
-function faceShade(face,partName){ const yaw=state.preview.yaw*Math.PI/180; const f={front:0.98,back:.74,left:.88,right:1.0,top:1.08,bottom:.68}[face];const wobble=partName==='body'?1:1;return f*wobble; }
-function renderFace(ctx,part,face,layer,expand,w,h,objects){
-  if(layer==='outer'&&!state.outer)return;
-  const region=uvRect(part.name,face,layer);if(!region)return;
-  const corners=faceCorners(part,face,expand);const proj=corners.map(p=>project3D(p,w,h));
-  if(!faceVisible(proj))return;
-  const steps=faceGridSteps(region); const cols=steps.cols,rows=steps.rows; const texW=region.w,texH=region.h;
-  for(let j=0;j<rows;j++){
-    const v0=j/rows,v1=(j+1)/rows;
-    for(let i=0;i<cols;i++){
-      const u0=i/cols,u1=(i+1)/cols;
-      const tx=region.x+u0*texW+(u1-u0)*texW*.5,ty=region.y+v0*texH+(v1-v0)*texH*.5;
-      const px=sampleTextureRect(region,tx,ty);if(px[3]<6)continue;
-      const p0=project3D(bilerp(corners,u0,v0),w,h),p1=project3D(bilerp(corners,u1,v0),w,h),p2=project3D(bilerp(corners,u1,v1),w,h),p3=project3D(bilerp(corners,u0,v1),w,h);
-      const shade=faceShade(face,part.name);let a=px[3]/255;if(layer==='outer')a*=0.96;
-      ctx.beginPath();ctx.moveTo(p0.x,p0.y);ctx.lineTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.lineTo(p3.x,p3.y);ctx.closePath();ctx.fillStyle=`rgba(${clamp(Math.round(px[0]*shade),0,255)},${clamp(Math.round(px[1]*shade),0,255)},${clamp(Math.round(px[2]*shade),0,255)},${a})`;ctx.fill();
-    }
+function softwareNormal(part,face){const n={front:{x:0,y:0,z:1},back:{x:0,y:0,z:-1},right:{x:1,y:0,z:0},left:{x:-1,y:0,z:0},top:{x:0,y:1,z:0},bottom:{x:0,y:-1,z:0}}[face]||{x:0,y:0,z:1};const walking=state.preview.anim==='walk'&&!state.preview.animPaused;let angle=0;if(walking){const swing=Math.sin(performance.now()*0.0045*state.preview.speed)*0.48;if(part.swingAxis==='arm')angle=part.name==='rightArm'?swing:-swing;if(part.swingAxis==='leg')angle=part.name==='rightLeg'?-swing:swing;}return svNorm(svRotateX(n,angle));}
+function softwareProject(p,w,h){const yaw=state.preview.yaw*Math.PI/180,pitch=clamp(state.preview.pitch,-86,86)*Math.PI/180,target={x:0,y:state.preview.targetY||0,z:0};const distCam=60/Math.max(.65,state.preview.zoom),cp=Math.cos(pitch),sp=Math.sin(pitch);const camera={x:Math.sin(yaw)*cp*distCam,y:target.y+sp*distCam,z:Math.cos(yaw)*cp*distCam};const forward=svNorm(svSub(target,camera));let right=svNorm(svCross(forward,{x:0,y:1,z:0}));if(!Number.isFinite(right.x))right={x:1,y:0,z:0};const up=svNorm(svCross(right,forward));const rel=svSub(p,target);const scale=Math.min(w,h)/34*state.preview.zoom;return {x:w/2+svDot(rel,right)*scale+state.preview.offsetX,y:h/2-svDot(rel,up)*scale+state.preview.offsetY,depth:svDot(svSub(p,camera),forward),camera,up,right,forward};}
+function drawSoftwareTexturedFace(ctx,info,w,h){const q=info.corners.map(p=>softwareProject(p,w,h));const toCamera=svNorm(svSub(q[0].camera,info.center));if(svDot(info.normal,toCamera)<=0.01)return null;const baseR=info.region;const ds=state.size/64;const r={...baseR,x:Math.round(baseR.x*ds),y:Math.round(baseR.y*ds),w:Math.max(1,Math.round(baseR.w*ds)),h:Math.max(1,Math.round(baseR.h*ds))};const tl=q[3],tr=q[2],bl=q[0],br=q[1];const a=(tr.x-tl.x)/r.w,b=(tr.y-tl.y)/r.w,c=(bl.x-tl.x)/r.h,d=(bl.y-tl.y)/r.h;ctx.save();ctx.beginPath();ctx.moveTo(q[0].x,q[0].y);ctx.lineTo(q[1].x,q[1].y);ctx.lineTo(q[2].x,q[2].y);ctx.lineTo(q[3].x,q[3].y);ctx.closePath();ctx.clip();ctx.imageSmoothingEnabled=false;ctx.setTransform(a,b,c,d,tl.x,tl.y);ctx.drawImage(imageCanvas,r.x,r.y,r.w,r.h,0,0,r.w,r.h);ctx.setTransform(1,0,0,1,0,0);const light={x:-.35,y:.8,z:.55};const n=svNorm(light);const ndl=Math.max(0,svDot(info.normal,n));const shade=.68+ndl*.32;ctx.fillStyle=`rgba(0,0,0,${Math.max(0,1-shade)})`;ctx.fillRect(-10,-10,r.w+20,r.h+20);ctx.restore();return {depth:q[0].depth};}
+function drawSoftwarePreview(ctx,w,h){
+  const bg=previewThemeColor();ctx.save();ctx.clearRect(0,0,w,h);ctx.fillStyle=`rgb(${Math.round(bg[0]*255)},${Math.round(bg[1]*255)},${Math.round(bg[2]*255)})`;ctx.fillRect(0,0,w,h);ctx.imageSmoothingEnabled=false;createTextureCanvas();const parts=buildPreviewParts();const faces=[];for(const part of parts){for(const face of ['back','left','bottom','right','top','front']){const base=part.base.data;faces.push({part,face,layer:'base',region:baseFaceRegion(part.name,face),corners:softwareFaceCorners(part,face,0),normal:softwareNormal(part,face),center:{x:part.center[0],y:part.center[1],z:part.center[2]}});if(state.outer){faces.push({part,face,layer:'outer',region:part.outer.data?baseFaceRegion(part.name,face,true):null,corners:softwareFaceCorners(part,face,.5),normal:softwareNormal(part,face),center:{x:part.center[0],y:part.center[1],z:part.center[2]}});}}
   }
-  objects.push({part,face,layer,corners,proj,depth:avgDepth(proj),region});
+  const valid=faces.filter(f=>f.region).map(f=>{const pr=softwareProject(f.center,w,h);return {...f,sortDepth:pr.depth};});valid.sort((a,b)=>b.sortDepth-a.sortDepth);for(const f of valid)drawSoftwareTexturedFace(ctx,f,w,h);ctx.restore();
 }
-function draw3DScene(ctx,w,h,mini=false){
-  ctx.clearRect(0,0,w,h);
-  const g=ctx.createRadialGradient(w*.5,h*.32,10,w*.5,h*.32,Math.min(w,h)*.58);g.addColorStop(0,'rgba(127,215,255,.11)');g.addColorStop(1,'rgba(127,215,255,0)');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
-  ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--preview-bg').trim()||'#0c0f14';ctx.fillRect(0,0,w,h);
-  // floor shadow
-  ctx.save();ctx.globalAlpha=.5;ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(w*.5,h*.83,Math.min(w,h)*.19,Math.min(w,h)*.035,0,0,Math.PI*2);ctx.fill();ctx.restore();
-  const parts=buildParts(performance.now()); const faces=[]; const faceList=['back','left','bottom','right','top','front'];
-  for(const part of parts){for(const face of faceList){renderFace(ctx,part,face,'base',0,w,h,faces);} if(state.outer){for(const face of faceList){renderFace(ctx,part,face,'outer',.45,w,h,faces);}}}
-  // Larger camera-space depth is farther away in this projection; draw far → near.
-  faces.sort((a,b)=>b.depth-a.depth);
-  // Re-render in depth order because the individual pixel faces were emitted in part order.
-  // Clear and replay sorted face entries using each face as a single mask/pixel grid pass.
-  // For performance, use the sorted list and draw them again; this keeps the painter order deterministic.
-  ctx.clearRect(0,0,w,h);ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--preview-bg').trim()||'#0c0f14';ctx.fillRect(0,0,w,h);ctx.fillStyle='rgba(127,215,255,.05)';ctx.beginPath();ctx.ellipse(w*.5,h*.35,Math.min(w,h)*.28,Math.min(w,h)*.35,0,0,Math.PI*2);ctx.fill();
-  ctx.save();ctx.globalAlpha=.5;ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(w*.5,h*.84,Math.min(w,h)*.19,Math.min(w,h)*.035,0,0,Math.PI*2);ctx.fill();ctx.restore();
-  // Actually render all faces in sorted order.
-  for(const f of faces) renderFaceOrdered(ctx,f,w,h);
-  if(selected3DFace){ctx.save();ctx.strokeStyle='rgba(127,215,255,.95)';ctx.lineWidth=2;ctx.setLineDash([7,5]);ctx.beginPath();const p=selected3DFace.proj;ctx.moveTo(p[0].x,p[0].y);for(let i=1;i<p.length;i++)ctx.lineTo(p[i].x,p[i].y);ctx.closePath();ctx.stroke();ctx.restore();}
+function baseFaceRegion(name,face,outer=false){const map=outer?outerMap(state.model):logicalMap(state.model);return map.find(r=>r.part===name&&r.face===face)||null;}
+function makePreviewRenderer(){
+  const gl=miniGL;
+  if(!gl){return {ready:!!miniCtx,webgl:false,setModel(){},setTexture(){},setOuter(){},render(){if(miniCtx){const s=resizeCanvas(els.miniPreviewCanvas);drawSoftwarePreview(miniCtx,s.w,s.h);}},fit(){const r=els.miniPreviewCanvas.getBoundingClientRect();state.preview.zoom=clamp(Math.min(r.width,r.height)/270,.72,1.15);state.preview.offsetX=0;state.preview.offsetY=0;this.render();},setCamera(kind){const presets={front:{yaw:0,pitch:0,targetY:0},back:{yaw:180,pitch:0,targetY:0},left:{yaw:-90,pitch:0,targetY:0},right:{yaw:90,pitch:0,targetY:0},top:{yaw:0,pitch:70,targetY:8},bottom:{yaw:0,pitch:-70,targetY:-9},reset:{yaw:-22,pitch:10,targetY:0}};if(kind==='fit'){this.fit();return;}const q=presets[kind]||presets.reset;Object.assign(state.preview,q);state.preview.offsetX=0;state.preview.offsetY=0;this.render();},start(){},stop(){}};}
+  let program;try{program=createPreviewProgram(gl);}catch(err){console.warn('Preview shader failed',err);return {ready:false,webgl:false,setModel(){},setTexture(){},setOuter(){},render(){},fit(){},setCamera(){},start(){},stop(){}};}
+  const posLoc=gl.getAttribLocation(program,'aPosition'),uvLoc=gl.getAttribLocation(program,'aUV'),nrmLoc=gl.getAttribLocation(program,'aNormal'),mvpLoc=gl.getUniformLocation(program,'uMVP'),modelLoc=gl.getUniformLocation(program,'uModel'),texLoc=gl.getUniformLocation(program,'uTexture');
+  const texture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,texture);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+  let parts=[];let textureDirty=true;let showOuter=true;let fitted=false;
+  function rebuild(){parts=buildPreviewParts();for(const p of parts){p.baseBuffer=createPreviewBuffer(gl,p.base.data);p.outerBuffer=createPreviewBuffer(gl,p.outer.data);}fitted=false;}
+  function uploadTexture(){gl.bindTexture(gl.TEXTURE_2D,texture);const arr=new Uint8Array(state.pixels);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,state.size,state.size,0,gl.RGBA,gl.UNSIGNED_BYTE,arr);textureDirty=false;}
+  function resize(){return resizePreviewCanvas();}
+  function render(){const r=resize();const {w,h}=r;gl.viewport(0,0,w,h);const bg=previewThemeColor();gl.clearColor(bg[0],bg[1],bg[2],0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);if(textureDirty)uploadTexture();if(!parts.length)rebuild();const fov=34*Math.PI/180,aspect=w/Math.max(1,h),proj=mat4Perspective(fov,aspect,0.1,200);const yaw=state.preview.yaw*Math.PI/180,pitch=clamp(state.preview.pitch,-86,86)*Math.PI/180;const target=[0,state.preview.targetY||0,0];const distCam=60/Math.max(.65,state.preview.zoom);const cp=Math.cos(pitch),sp=Math.sin(pitch);const camera=[Math.sin(yaw)*cp*distCam,target[1]+sp*distCam,Math.cos(yaw)*cp*distCam];const view=mat4LookAt(camera,target,[0,1,0]);const pv=mat4Multiply(proj,view);gl.useProgram(program);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);gl.uniform1i(texLoc,0);gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);gl.cullFace(gl.BACK);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(true);const t=performance.now();const walking=state.preview.anim==='walk'&&!state.preview.animPaused;const phase=t*0.0045*Math.max(.15,state.preview.speed);const swing=walking?Math.sin(phase)*0.48:0;
+    for(const p of parts){let rx=0;if(p.swingAxis==='arm')rx=p.name==='rightArm'?swing:-swing;if(p.swingAxis==='leg')rx=p.name==='rightLeg'?-swing:swing;const T=mat4Translate(p.center[0],p.center[1],p.center[2]);const R1=mat4Translate(p.pivotOffset[0],p.pivotOffset[1],p.pivotOffset[2]);const R=mat4RotateX(rx);const R2=mat4Translate(-p.pivotOffset[0],-p.pivotOffset[1],-p.pivotOffset[2]);const model=mat4Multiply(T,mat4Multiply(R1,mat4Multiply(R,R2)));drawBuffer(p.baseBuffer,p.base,model,pv);if(showOuter)drawBuffer(p.outerBuffer,p.outer,model,pv);}
+  }
+  function drawBuffer(buffer,geom,model,pv){if(!buffer)return;gl.uniformMatrix4fv(mvpLoc,false,pv);gl.uniformMatrix4fv(modelLoc,false,model);gl.bindBuffer(gl.ARRAY_BUFFER,buffer.pos);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,buffer.uv);gl.enableVertexAttribArray(uvLoc);gl.vertexAttribPointer(uvLoc,2,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,buffer.nrm);gl.enableVertexAttribArray(nrmLoc);gl.vertexAttribPointer(nrmLoc,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,buffer.idx);gl.drawElements(gl.TRIANGLES,buffer.count,gl.UNSIGNED_SHORT,0);}
+  function setModel(){rebuild();render();}
+  function setTexture(){textureDirty=true;}
+  function setOuter(v){showOuter=v;render();}
+  function fit(){const r=resize();state.preview.zoom=clamp(Math.min(r.cssW,r.cssH)/270,.72,1.15);state.preview.offsetX=0;state.preview.offsetY=0;render();}
+  function setCamera(kind){const presets={front:{yaw:0,pitch:0,targetY:0},back:{yaw:180,pitch:0,targetY:0},left:{yaw:-90,pitch:0,targetY:0},right:{yaw:90,pitch:0,targetY:0},top:{yaw:0,pitch:70,targetY:8},bottom:{yaw:0,pitch:-70,targetY:-9},reset:{yaw:-22,pitch:10,targetY:0}};if(kind==='fit'){fit();return;}const p=presets[kind]||presets.reset;state.preview.yaw=p.yaw;state.preview.pitch=p.pitch;state.preview.targetY=p.targetY;state.preview.offsetX=0;state.preview.offsetY=0;render();}
+  rebuild();
+  return {ready:true,webgl:true,setModel,setTexture,setOuter,render,fit,setCamera};
 }
-function renderFaceOrdered(ctx,f,w,h){
-  const {part,face,layer,proj,region}=f;const corners=faceCorners(part,face,layer==='outer'?.45:0);if(!region||!faceVisible(proj))return;const steps=faceGridSteps(region);const cols=steps.cols,rows=steps.rows;const texW=region.w,texH=region.h;for(let j=0;j<rows;j++){const v0=j/rows,v1=(j+1)/rows;for(let i=0;i<cols;i++){const u0=i/cols,u1=(i+1)/cols;const tx=region.x+u0*texW+(u1-u0)*texW*.5,ty=region.y+v0*texH+(v1-v0)*texH*.5;const p=sampleTextureRect(region,tx,ty);if(p[3]<6)continue;const a=layer==='outer'?(p[3]/255*.96):p[3]/255;const shade=faceShade(face,part.name);const q0=project3D(bilerp(corners,u0,v0),w,h),q1=project3D(bilerp(corners,u1,v0),w,h),q2=project3D(bilerp(corners,u1,v1),w,h),q3=project3D(bilerp(corners,u0,v1),w,h);ctx.beginPath();ctx.moveTo(q0.x,q0.y);ctx.lineTo(q1.x,q1.y);ctx.lineTo(q2.x,q2.y);ctx.lineTo(q3.x,q3.y);ctx.closePath();ctx.fillStyle=`rgba(${clamp(Math.round(p[0]*shade),0,255)},${clamp(Math.round(p[1]*shade),0,255)},${clamp(Math.round(p[2]*shade),0,255)},${a})`;ctx.fill();}}
-}
-function rayPickFace(x,y,canvas){
-  const rect=canvas.getBoundingClientRect();const w=rect.width,h=rect.height;const parts=buildParts(performance.now());const hits=[];
-  for(const part of parts){for(const layer of (state.outer?['base','outer']:['base'])){for(const face of ['front','back','left','right','top','bottom']){const region=uvRect(part.name,face,layer);if(!region)continue;const proj=faceCorners(part,face,layer==='outer'?.45:0).map(p=>project3D(p,w,h));if(!faceVisible(proj))continue;if(pointInQuad({x,y},proj)){hits.push({part,face,layer,proj,region,depth:avgDepth(proj)});}}}}
-  // Smaller camera-space depth is closer to the viewer.
-  hits.sort((a,b)=>a.depth-b.depth);return hits[0]||null;
-}
-function pointInQuad(pt,q){let sign=0;for(let i=0;i<4;i++){const a=q[i],b=q[(i+1)%4];const c=(b.x-a.x)*(pt.y-a.y)-(b.y-a.y)*(pt.x-a.x);if(Math.abs(c)<0.01)continue;if(sign===0)sign=Math.sign(c);else if(Math.sign(c)!==sign)return false;}return true;}
-function quadUv(pt,q){ // inverse bilinear via two triangles
-  const a=q[0],b=q[1],c=q[2],d=q[3];
-  const tri=(p,p0,p1,p2)=>{const v0={x:p1.x-p0.x,y:p1.y-p0.y},v1={x:p2.x-p0.x,y:p2.y-p0.y},v2={x:p.x-p0.x,y:p.y-p0.y};const den=v0.x*v1.y-v1.x*v0.y;if(Math.abs(den)<1e-6)return null;const u=(v2.x*v1.y-v1.x*v2.y)/den,v=(v0.x*v2.y-v2.x*v0.y)/den;return {u,v};};
-  let r=tri(pt,a,b,d);if(r&&r.u>=-0.001&&r.v>=-0.001&&r.u+r.v<=1.001)return {u:r.u,v:r.v};r=tri(pt,b,c,d);if(r&&r.u>=-0.001&&r.v>=-0.001&&r.u+r.v<=1.001)return {u:1-r.u,v:r.u};return null;
-}
-function pickTextureFromFace(hit,localX,localY){const inv=quadUv({x:localX,y:localY},hit.proj);if(!inv)return null;const x=Math.floor(hit.region.x+inv.u*hit.region.w);const y=Math.floor(hit.region.y+inv.v*hit.region.h);return {x:clamp(x,0,state.size-1),y:clamp(y,0,state.size-1),face:hit};}
-function render3D(force=false){
-  const r=resizeCanvas(els.characterCanvas);draw3DScene(charCtx,r.w,r.h);const m=resizeCanvas(els.miniPreviewCanvas);const saved={...state.preview,anim:'idle',animPaused:true};const current={...state.preview};state.preview.anim='idle';state.preview.animPaused=true;state.preview.scale=miniFitScale(m.w,m.h);state.preview.offsetX=0;state.preview.offsetY=0;draw3DScene(miniCtx,m.w,m.h,true);state.preview=current;
-  els.previewStatus.textContent=state.preview.anim==='walk'&&!state.preview.animPaused?'WALKING':'LIVE';els.previewStatus.classList.toggle('warning',state.preview.anim==='walk'&&!state.preview.autoPerformance);
-}
-function miniFitScale(w,h){return Math.min(w,h)/38;}
-function scheduleCharacterFrame(){if(state.mode==='3d'||!els.characterPane.hidden)render3D();else render3DMiniOnly();}
-function render3DMiniOnly(){const m=resizeCanvas(els.miniPreviewCanvas);const current={...state.preview};state.preview.scale=miniFitScale(m.w,m.h);state.preview.offsetX=0;state.preview.offsetY=2;draw3DScene(miniCtx,m.w,m.h,true);state.preview=current;}
-function animateLoop(ts){
-  charFrameHandle=requestAnimationFrame(animateLoop);
-  if(state.preview.anim!=='walk'||state.preview.animPaused)return;
-  const minInterval=state.preview.autoPerformance?(navigator.hardwareConcurrency&&navigator.hardwareConcurrency<=4?1000/24:1000/30):1000/60;
-  if(ts-lastAnimDraw<minInterval)return;lastAnimDraw=ts;
-  render3D(false);
-}
-charFrameHandle=requestAnimationFrame(animateLoop);
-function setAnimation(kind){state.preview.anim=kind;state.preview.animPaused=kind==='idle';els.idleBtn.classList.toggle('active',kind==='idle');els.walkBtn.classList.toggle('active',kind==='walk');els.pauseAnimBtn.textContent=state.preview.animPaused?'Resume':'Pause';els.walkToggleBtn.textContent=kind==='walk'&&!state.preview.animPaused?'⏸ Walk':'▶ Walk';render3D(true);}
-function toggleWalk(){if(state.preview.anim==='walk'&&!state.preview.animPaused){state.preview.animPaused=true;}else{state.preview.anim='walk';state.preview.animPaused=false;}els.idleBtn.classList.toggle('active',state.preview.anim==='idle');els.walkBtn.classList.toggle('active',state.preview.anim==='walk');els.pauseAnimBtn.textContent=state.preview.animPaused?'Resume':'Pause';els.walkToggleBtn.textContent=state.preview.anim==='walk'&&!state.preview.animPaused?'⏸ Walk':'▶ Walk';}
-function setCameraForFace(face){const angles={front:[0,-6],back:[180,-6],left:[-90,-6],right:[90,-6],top:[0,-62],bottom:[0,62]};const [yaw,pitch]=angles[face]||angles.front;state.preview.yaw=yaw;state.preview.pitch=pitch;render3D(true);}
-function setPresetCamera(kind){const a={front:[0,-6],back:[180,-6],left:[-90,-6],right:[90,-6],top:[0,-62],reset:[-26,-10]}[kind];if(a){state.preview.yaw=a[0];state.preview.pitch=a[1];}render3D(true);}
-
-function handleCharacterPointerDown(ev){ev.preventDefault();const rect=els.characterCanvas.getBoundingClientRect();const pt={x:ev.clientX-rect.left,y:ev.clientY-rect.top};state.pointerMap.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});els.characterCanvas.setPointerCapture(ev.pointerId);if(state.pointerMap.size>=2){state.gesture={startMid:midpoint(...[...state.pointerMap.values()].slice(0,2)),startDist:dist(...[...state.pointerMap.values()].slice(0,2)),startYaw:state.preview.yaw,startPitch:state.preview.pitch,startScale:state.preview.scale};return;}
-  if(state.cameraMode==='paint'){const hit=rayPickFace(pt.x,pt.y,els.characterCanvas);selected3DFace=hit;if(hit){const picked=pickTextureFromFace(hit,pt.x,pt.y);if(picked){els.characterFaceReadout.textContent=`${PART_LABELS[hit.part.name]} · ${FACE_LABELS[hit.face]} · ${hit.layer}`;apply3DPaintAt(picked.x,picked.y);render3D(true);}}}
-  else {state.gesture={startX:ev.clientX,startY:ev.clientY,startYaw:state.preview.yaw,startPitch:state.preview.pitch,startScale:state.preview.scale,startMid:{x:ev.clientX,y:ev.clientY},startDist:0};}
-}
-function handleCharacterPointerMove(ev){if(!state.pointerMap.has(ev.pointerId))return;state.pointerMap.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});if(state.pointerMap.size>=2){if(!state.gesture)return;const pts=[...state.pointerMap.values()];const a=pts[0],b=pts[1],m=midpoint(a,b);const d=dist(a,b);if(!state.gesture.startDist)state.gesture.startDist=d;state.preview.scale=clamp(state.gesture.startScale*(d/state.gesture.startDist),5,28);state.preview.yaw=state.gesture.startYaw+(m.x-state.gesture.startMid.x)*0.4;state.preview.pitch=clamp(state.gesture.startPitch+(m.y-state.gesture.startMid.y)*0.3,-80,80);render3D();return;}
-  if(state.cameraMode==='camera'&&state.gesture){state.preview.yaw=state.gesture.startYaw+(ev.clientX-state.gesture.startX)*0.5;state.preview.pitch=clamp(state.gesture.startPitch+(ev.clientY-state.gesture.startY)*0.4,-80,80);render3D();}
-  else if(state.cameraMode==='paint'){const rect=els.characterCanvas.getBoundingClientRect();const hit=rayPickFace(ev.clientX-rect.left,ev.clientY-rect.top,els.characterCanvas);if(hit){const picked=pickTextureFromFace(hit,ev.clientX-rect.left,ev.clientY-rect.top);if(picked){apply3DPaintAt(picked.x,picked.y);selected3DFace=hit;render3D();}}}
-}
-function handleCharacterPointerUp(ev){state.pointerMap.delete(ev.pointerId);try{els.characterCanvas.releasePointerCapture(ev.pointerId);}catch{}if(state.pointerMap.size===0)state.gesture=null;}
-function handleCharacterWheel(ev){ev.preventDefault();state.preview.scale=clamp(state.preview.scale*(ev.deltaY<0?1.1:.9),5,28);render3D();}
-function apply3DPaintAt(x,y){ if(state.tool==='picker'){setColor('#'+rgbaToHex(...getPixel(x,y).slice(0,3)));setTool('pencil');return;}if(state.tool==='fill'){beginStroke();floodFill(x,y);finishStroke();return;}if(state.tool==='replace'){beginStroke();replaceColors(getPixel(x,y));finishStroke();return;}if(!state.drawing)beginStroke();stampBrush(x,y);renderEditor();}
-
-function updateModel(model){state.model=model;syncSelectors();pushHistory();renderAll();toast(`Model: ${model==='classic'?'Classic / Steve · 4px arms':'Slim / Alex · 3px arms'}`);}
-function syncSelectors(){els.modelSelect.value=state.model;els.textureSizeSelect.value=[64,128].includes(state.size)?String(state.size):'custom';els.docSize.textContent=`${state.size}×${state.size}`;els.characterResolutionLabel.textContent=`${state.size}×${state.size}`;}
+const previewRenderer=makePreviewRenderer();
+function scheduleCharacterFrame(){previewRenderer.setTexture();previewRenderer.render();}
+function render3D(){previewRenderer.render();const walking=state.preview.anim==='walk'&&!state.preview.animPaused;els.previewStatus.textContent=walking?'WALKING':'LIVE';els.previewStatus.classList.toggle('warning',walking&&state.preview.autoPerformance);}
+function stopAnimationLoop(){if(charFrameHandle){cancelAnimationFrame(charFrameHandle);charFrameHandle=0;}}
+function startAnimationLoop(){if(charFrameHandle)return;lastAnimDraw=0;charFrameHandle=requestAnimationFrame(animateLoop);}
+function animateLoop(ts){if(state.preview.anim!=='walk'||state.preview.animPaused){charFrameHandle=0;render3D();return;}charFrameHandle=requestAnimationFrame(animateLoop);const targetFps=state.preview.autoPerformance?(navigator.hardwareConcurrency&&navigator.hardwareConcurrency<=4?24:30):60;const interval=1000/targetFps;if(ts-lastAnimDraw<interval)return;lastAnimDraw=ts;previewRenderer.render();}
+function setAnimation(kind){state.preview.anim=kind;state.preview.animPaused=kind==='idle';els.idleBtn.classList.toggle('active',kind==='idle');els.walkBtn.classList.toggle('active',kind==='walk');els.pauseAnimBtn.textContent=state.preview.animPaused?'Resume':'Pause';els.walkToggleBtn.textContent=kind==='walk'&&!state.preview.animPaused?'⏸ Walk':'▶ Walk';if(kind==='walk'&&!state.preview.animPaused)startAnimationLoop();else stopAnimationLoop();previewRenderer.render();}
+function toggleWalk(){if(state.preview.anim==='walk'&&!state.preview.animPaused){state.preview.animPaused=true;stopAnimationLoop();}else{state.preview.anim='walk';state.preview.animPaused=false;startAnimationLoop();}els.idleBtn.classList.toggle('active',state.preview.anim==='idle');els.walkBtn.classList.toggle('active',state.preview.anim==='walk');els.pauseAnimBtn.textContent=state.preview.anim==='idle'?'Paused':(state.preview.animPaused?'Resume':'Pause');els.pauseAnimBtn.disabled=state.preview.anim==='idle';els.walkToggleBtn.textContent=state.preview.anim==='walk'&&!state.preview.animPaused?'⏸ Walk':'▶ Walk';previewRenderer.render();}
+function setPresetCamera(kind){previewRenderer.setCamera(kind);}
+const previewPointers=new Map();let previewGesture=null;
+function bindPreviewCameraGestures(){if(!els.miniPreviewCanvas)return;els.miniPreviewCanvas.addEventListener('pointerdown',e=>{e.preventDefault();previewPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});els.miniPreviewCanvas.setPointerCapture?.(e.pointerId);const pts=[...previewPointers.values()];if(pts.length>=2){const a=pts[0],b=pts[1];previewGesture={mode:'pinch',startMid:midpoint(a,b),startDist:dist(a,b),startYaw:state.preview.yaw,startPitch:state.preview.pitch,startScale:state.preview.zoom};}else previewGesture={mode:'orbit',startX:e.clientX,startY:e.clientY,startYaw:state.preview.yaw,startPitch:state.preview.pitch};},{passive:false});els.miniPreviewCanvas.addEventListener('pointermove',e=>{if(!previewPointers.has(e.pointerId))return;e.preventDefault();previewPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});const pts=[...previewPointers.values()];if(pts.length>=2){const a=pts[0],b=pts[1],g=previewGesture||{};const m=midpoint(a,b),d=dist(a,b);if(g.mode!=='pinch'){previewGesture={mode:'pinch',startMid:m,startDist:d,startYaw:state.preview.yaw,startPitch:state.preview.pitch,startScale:state.preview.zoom};return;}state.preview.zoom=clamp(g.startScale*(d/Math.max(1,g.startDist)),.65,1.8);state.preview.yaw=g.startYaw+(m.x-g.startMid.x)*.55;state.preview.pitch=clamp(g.startPitch+(m.y-g.startMid.y)*.42,-82,82);previewRenderer.render();return;}if(!previewGesture||previewGesture.mode!=='orbit')return;state.preview.yaw=previewGesture.startYaw+(e.clientX-previewGesture.startX)*.55;state.preview.pitch=clamp(previewGesture.startPitch+(e.clientY-previewGesture.startY)*.42,-82,82);previewRenderer.render();},{passive:false});const end=e=>{previewPointers.delete(e.pointerId);if(previewPointers.size===0)previewGesture=null;try{els.miniPreviewCanvas.releasePointerCapture?.(e.pointerId);}catch{}};els.miniPreviewCanvas.addEventListener('pointerup',end);els.miniPreviewCanvas.addEventListener('pointercancel',end);els.miniPreviewCanvas.addEventListener('wheel',e=>{e.preventDefault();state.preview.zoom=clamp(state.preview.zoom*(e.deltaY<0?1.1:.9),.65,1.8);previewRenderer.render();},{passive:false});els.miniPreviewCanvas.addEventListener('dblclick',()=>setPresetCamera('reset'));}
+function updateModel(model){state.model=model;previewRenderer.setModel();syncSelectors();pushHistory();renderAll();toast(`Model: ${model==='classic'?'Classic / Steve · 4px arms':'Slim / Alex · 3px arms'}`);}
+function syncSelectors(){els.modelSelect.value=state.model;els.textureSizeSelect.value=[64,128].includes(state.size)?String(state.size):'custom';els.docSize.textContent=`${state.size}×${state.size}`;els.canvasResolutionLabel && (els.canvasResolutionLabel.textContent=`${state.size}×${state.size}`);}
 function changeTextureSize(size){size=Number(size);if(!Number.isFinite(size))return;const old=state.size;const oldPixels=state.pixels;const newPixels=new Uint8ClampedArray(size*size*4);for(let y=0;y<size;y++)for(let x=0;x<size;x++){const sx=Math.floor(x/size*old),sy=Math.floor(y/size*old);const si=(sy*old+sx)*4,di=(y*size+x)*4;newPixels[di]=oldPixels[si];newPixels[di+1]=oldPixels[si+1];newPixels[di+2]=oldPixels[si+2];newPixels[di+3]=oldPixels[si+3];}state.size=size;state.pixels=newPixels;state.title=`${size}×${size} Skin`;pushHistory();syncSelectors();fitEditorView();renderAll();toast(`Texture changed to ${size}×${size}`);}
 
 function loadImageAsSkin(file,allowCustom=true){
-  const img=new Image();const url=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(url);const size=img.naturalWidth;if(img.naturalWidth!==img.naturalHeight){toast('Skin texture must be square. Image kept as a reference instead.','warn');loadReferenceObject(img);return;}if(size<MIN_TEX||size>MAX_TEX){toast(`Texture size must be between ${MIN_TEX} and ${MAX_TEX}.`, 'warn');loadReferenceObject(img);return;}const c=document.createElement('canvas');c.width=size;c.height=size;const cx=c.getContext('2d',{willReadFrequently:true});cx.imageSmoothingEnabled=false;cx.drawImage(img,0,0);const data=cx.getImageData(0,0,size,size).data;state.size=size;state.pixels=new Uint8ClampedArray(data);state.title=file.name.replace(/\.[^.]+$/,'');state.reference=null;state.referenceVisible=false;syncSelectors();pushHistory();fitEditorView();renderAll();toast(`Loaded ${size}×${size} skin automatically.`);setMode('2d');};img.onerror=()=>{URL.revokeObjectURL(url);toast('Could not read that image.','warn');};img.src=url;}
+  const img=new Image();const url=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(url);const size=img.naturalWidth;if(img.naturalWidth!==img.naturalHeight){toast('Skin texture must be square. Image kept as a reference instead.','warn');loadReferenceObject(img);return;}if(size<MIN_TEX||size>MAX_TEX){toast(`Texture size must be between ${MIN_TEX} and ${MAX_TEX}.`, 'warn');loadReferenceObject(img);return;}const c=document.createElement('canvas');c.width=size;c.height=size;const cx=c.getContext('2d',{willReadFrequently:true});cx.imageSmoothingEnabled=false;cx.drawImage(img,0,0);const data=cx.getImageData(0,0,size,size).data;state.size=size;state.pixels=new Uint8ClampedArray(data);state.title=file.name.replace(/\.[^.]+$/,'');state.reference=null;state.referenceVisible=false;syncSelectors();pushHistory();fitEditorView();previewRenderer.setTexture();renderAll();toast(`Loaded ${size}×${size} skin automatically.`);};img.onerror=()=>{URL.revokeObjectURL(url);toast('Could not read that image.','warn');};img.src=url;}
 function loadReferenceObject(img){state.reference=img;state.referenceVisible=true;els.referenceToggle.checked=true;els.referenceToggle.dispatchEvent(new Event('change'));}
 function loadReference(file){const img=new Image();const url=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(url);loadReferenceObject(img);toast('Reference image loaded. It will not alter the skin until you paint.');};img.onerror=()=>{URL.revokeObjectURL(url);toast('Reference image could not be read.','warn');};img.src=url;}
 function createTextureDataFromFile(file,callback){const img=new Image();const url=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(url);callback(img);};img.onerror=()=>{URL.revokeObjectURL(url);toast('Could not load image.','warn');};img.src=url;}
 
 function exportPNG(){const c=document.createElement('canvas');c.width=state.size;c.height=state.size;const cctx=c.getContext('2d');cctx.putImageData(new ImageData(new Uint8ClampedArray(state.pixels),state.size,state.size),0,0);c.toBlob(blob=>{if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${state.title||'nova-skin'}.png`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('PNG exported.');},'image/png');}
 function saveLibrary(){const key='nova-library-v2';let list=[];try{list=JSON.parse(localStorage.getItem(key)||'[]');}catch{}const thumb=document.createElement('canvas');thumb.width=64;thumb.height=64;const tc=thumb.getContext('2d');tc.imageSmoothingEnabled=false;tc.drawImage(imageCanvas,0,0,64,64);const item={id:crypto.randomUUID?crypto.randomUUID():String(Date.now()),name:state.title||'Untitled skin',size:state.size,model:state.model,data:thumb.toDataURL('image/png'),pixels:Array.from(state.pixels)};list=[item,...list].slice(0,24);localStorage.setItem(key,JSON.stringify(list));renderLibrary();toast('Saved to My skins.');}
-function renderLibrary(){let list=[];try{list=JSON.parse(localStorage.getItem('nova-library-v2')||'[]');}catch{}els.libraryList.innerHTML='';if(!list.length){els.libraryList.innerHTML='<div class="library-empty">No saved skins yet.</div>';return;}for(const item of list){const b=document.createElement('button');b.className='library-item';b.innerHTML=`<img src="${item.data}" alt=""><span>${escapeHtml(item.name)}</span><small>${item.size}×${item.size} · ${item.model}</small>`;b.addEventListener('click',()=>{state.size=item.size;state.model=item.model;state.pixels=new Uint8ClampedArray(item.pixels);state.title=item.name;syncSelectors();pushHistory();fitEditorView();renderAll();toast('Loaded from My skins.');});els.libraryList.appendChild(b);}}
+function renderLibrary(){let list=[];try{list=JSON.parse(localStorage.getItem('nova-library-v2')||'[]');}catch{}els.libraryList.innerHTML='';if(!list.length){els.libraryList.innerHTML='<div class="library-empty">No saved skins yet.</div>';return;}for(const item of list){const b=document.createElement('button');b.className='library-item';b.innerHTML=`<img src="${item.data}" alt=""><span>${escapeHtml(item.name)}</span><small>${item.size}×${item.size} · ${item.model}</small>`;b.addEventListener('click',()=>{state.size=item.size;state.model=item.model;state.pixels=new Uint8ClampedArray(item.pixels);state.title=item.name;previewRenderer.setModel();previewRenderer.setTexture();syncSelectors();pushHistory();fitEditorView();renderAll();toast('Loaded from My skins.');});els.libraryList.appendChild(b);}}
 function escapeHtml(s){return String(s).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));}
 
 function applyTemplate(kind){
-  const src=kind==='classic'?'assets/complete-classic-template.png':kind==='slim'?'assets/complete-slim-template.png':'assets/demo-128.png';const img=new Image();img.onload=()=>{const size=img.naturalWidth;const c=document.createElement('canvas');c.width=size;c.height=size;c.getContext('2d').drawImage(img,0,0);state.size=size;state.pixels=new Uint8ClampedArray(c.getContext('2d').getImageData(0,0,size,size).data);state.model=kind==='slim'?'slim':'classic';state.title=kind==='classic'?'Complete Classic Starter':kind==='slim'?'Complete Slim Starter':'128×128 Demo';syncSelectors();pushHistory();fitEditorView();renderAll();els.templateModal.hidden=true;setMode('2d');toast('Starter template loaded.');};img.src=src;}
+  const src=kind==='classic'?'assets/complete-classic-template.png':kind==='slim'?'assets/complete-slim-template.png':'assets/demo-128.png';const img=new Image();img.onload=()=>{const size=img.naturalWidth;const c=document.createElement('canvas');c.width=size;c.height=size;c.getContext('2d').drawImage(img,0,0);state.size=size;state.pixels=new Uint8ClampedArray(c.getContext('2d').getImageData(0,0,size,size).data);state.model=kind==='slim'?'slim':'classic';state.title=kind==='classic'?'Complete Classic Starter':kind==='slim'?'Complete Slim Starter':'128×128 Demo';syncSelectors();pushHistory();fitEditorView();previewRenderer.setModel();previewRenderer.setTexture();renderAll();els.templateModal.hidden=true;toast('Starter template loaded.');};img.src=src;}
 
-function renderChecks(){const standard=[64,128].includes(state.size);const custom=state.size>128;const textureOk=state.size>=64&&state.size<=1024&&state.size===Math.round(state.size)&&state.pixels.length===state.size*state.size*4;const items=[[standard,'Standard Bedrock texture size'],[custom,'Advanced custom texture size'],[textureOk,'Texture buffer valid'],[alphaPixels()>0,'Texture contains pixels'],[state.historyIndex>=0,'Undo history ready'],[state.mode==='3d','3D editor available']];els.checks.innerHTML=items.map(([ok,t])=>`<div class="check ${ok?'ok':'warn'}"><span class="check-icon">${ok?'✓':'!'}</span><span>${t}</span></div>`).join('');}
-function renderAll(){renderSwatches();renderEditor();render3D(true);renderChecks();renderLibrary();updateHistoryButtons();updateControlLabels();syncSelectors();}
+function renderChecks(){const standard=[64,128].includes(state.size);const custom=state.size>128;const textureOk=state.size>=64&&state.size<=1024&&state.size===Math.round(state.size)&&state.pixels.length===state.size*state.size*4;const previewOk=!!previewRenderer?.ready;const items=[[standard,'Standard Bedrock texture size'],[custom,'Advanced custom texture size'],[textureOk,'Texture buffer valid'],[alphaPixels()>0,'Texture contains pixels'],[state.historyIndex>=0,'Undo history ready'],[previewOk,'Character preview renderer ready']];els.checks.innerHTML=items.map(([ok,t])=>`<div class="check ${ok?'ok':'warn'}"><span class="check-icon">${ok?'✓':'!'}</span><span>${t}</span></div>`).join('');}
+function renderAll(){renderSwatches();renderEditor();previewRenderer.setTexture();previewRenderer.setOuter(state.outer);render3D();renderChecks();renderLibrary();updateHistoryButtons();updateControlLabels();syncSelectors();}
 
 function setDocumentTitleStatus(msg){els.docStatus.textContent=msg;}
 
-function persistAutosave(){try{const payload={size:state.size,model:state.model,mode:state.mode,tool:state.tool,layer:state.layer,title:state.title,pixels:Array.from(state.pixels),focus:state.focus,locks:state.locks};localStorage.setItem('nova-autosave-v3',JSON.stringify(payload));}catch(e){/* storage may be unavailable */}}
-function loadAutosave(){try{const raw=localStorage.getItem('nova-autosave-v3');if(!raw)return false;const d=JSON.parse(raw);if(!d.pixels||!d.size)return false;state.size=d.size;state.model=d.model||'classic';state.pixels=new Uint8ClampedArray(d.pixels);state.title=d.title||'Recovered Skin';state.focus=d.focus||state.focus;state.locks=d.locks||state.locks;syncSelectors();pushHistory();fitEditorView();renderAll();toast('Recovered your last autosaved skin.');return true;}catch{return false;}}
+function persistAutosave(){try{const payload={version:APP_VERSION,size:state.size,model:state.model,tool:state.tool,layer:state.layer,title:state.title,pixels:Array.from(state.pixels),focus:state.focus,locks:state.locks};localStorage.setItem('nova-autosave-v3',JSON.stringify(payload));}catch(e){/* storage may be unavailable */}}
+function loadAutosave(){try{const raw=localStorage.getItem('nova-autosave-v3');if(!raw)return false;const d=JSON.parse(raw);if(!d.pixels||!d.size)return false;state.size=d.size;state.model=d.model||'classic';state.pixels=new Uint8ClampedArray(d.pixels);state.title=d.title||'Recovered Skin';state.focus=d.focus||state.focus;state.locks={...state.locks,...(d.locks||{})};focusBounds=state.focus.part&&state.focus.face?getFocusRegion(state.focus.part,state.focus.face,'base'):null;syncSelectors();els.focusLockBtn.textContent=state.focus.locked?'🔒 Unlock':'🔓 Lock';els.focusMeta.hidden=!state.focus.part;if(state.focus.part&&state.focus.face)els.focusStatus.textContent=`${PART_LABELS[state.focus.part]} · ${FACE_LABELS[state.focus.face]}`;pushHistory();fitEditorView();previewRenderer.setModel();previewRenderer.setTexture();renderAll();toast('Recovered your last autosaved skin.');return true;}catch{return false;}}
 
 function setupEvents(){
-  let savedTheme='midnight'; try{savedTheme=localStorage.getItem('nova-theme')||'midnight';}catch{} els.themeSelect.value=savedTheme;themeSet(els.themeSelect.value);els.themeSelect.addEventListener('change',()=>{themeSet(els.themeSelect.value);render3D(true);});
+  let savedTheme='midnight'; try{savedTheme=localStorage.getItem('nova-theme')||'midnight';}catch{} els.themeSelect.value=savedTheme;themeSet(els.themeSelect.value);els.themeSelect.addEventListener('change',()=>{themeSet(els.themeSelect.value);previewRenderer.render();});
   els.toolGrid.addEventListener('click',e=>{const b=e.target.closest('[data-tool]');if(b)setTool(b.dataset.tool);});
   els.layerGrid.addEventListener('click',e=>{const b=e.target.closest('[data-layer]');if(b)setLayer(b.dataset.layer);});
-  els.modeButtons.forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
-  els.cameraModeButtons.forEach(b=>b.addEventListener('click',()=>setCameraMode(b.dataset.cameraMode)));
   els.brushSize.addEventListener('input',updateControlLabels);els.brushOpacity.addEventListener('input',()=>{state.toolOpacity=Number(els.brushOpacity.value);updateControlLabels();});els.brushShape.addEventListener('change',()=>state.brushShape=els.brushShape.value);els.pixelPerfect.addEventListener('change',()=>state.pixelPerfect=els.pixelPerfect.checked);els.shadeMode.addEventListener('change',()=>state.shadeMode=els.shadeMode.value);els.replaceTolerance.addEventListener('input',()=>{state.replaceTolerance=Number(els.replaceTolerance.value);updateControlLabels();});els.mirrorToggle.addEventListener('change',()=>state.mirror=els.mirrorToggle.checked);
-  els.gridToggle.addEventListener('change',()=>{state.grid=els.gridToggle.checked;renderEditor();});els.checkerToggle.addEventListener('change',()=>{state.checker=els.checkerToggle.checked;renderEditor();});els.outerToggle.addEventListener('change',()=>{state.outer=els.outerToggle.checked;render3D(true);});
+  els.gridToggle.addEventListener('change',()=>{state.grid=els.gridToggle.checked;renderEditor();});els.checkerToggle.addEventListener('change',()=>{state.checker=els.checkerToggle.checked;renderEditor();});els.outerToggle.addEventListener('change',()=>{state.outer=els.outerToggle.checked;previewRenderer.setOuter(state.outer);});
   els.zoomInBtn.addEventListener('click',()=>setEditorZoom(editorView.pixelSize*1.25));els.zoomOutBtn.addEventListener('click',()=>setEditorZoom(editorView.pixelSize*.8));els.fitBtn.addEventListener('click',fitEditorView);els.centerBtn.addEventListener('click',centerEditorView);els.resetViewBtn.addEventListener('click',()=>{fitEditorView();toast('View reset.');});
   els.focusBtn.addEventListener('click',openFocusModal);els.focusLockBtn.addEventListener('click',toggleFocusLock);els.focusApplyBtn.addEventListener('click',applyFocus);
   els.layerLockBase.addEventListener('click',()=>toggleLock('base'));els.layerLockOuter.addEventListener('click',()=>toggleLock('outer'));
   els.colorInput.addEventListener('input',()=>setColor(els.colorInput.value));els.hexInput.addEventListener('change',()=>setColor(els.hexInput.value));els.clearRecentBtn.addEventListener('click',()=>{state.recentColors=[];renderSwatches();});
   els.undoBtn.addEventListener('click',undo);els.redoBtn.addEventListener('click',redo);window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();redo();}});
   els.editorCanvas.addEventListener('pointerdown',handleEditorPointerDown);els.editorCanvas.addEventListener('pointermove',handleEditorPointerMove);els.editorCanvas.addEventListener('pointerup',handleEditorPointerUp);els.editorCanvas.addEventListener('pointercancel',handleEditorPointerUp);els.editorCanvas.addEventListener('wheel',handleEditorWheel,{passive:false});
-  els.characterCanvas.addEventListener('pointerdown',handleCharacterPointerDown);els.characterCanvas.addEventListener('pointermove',handleCharacterPointerMove);els.characterCanvas.addEventListener('pointerup',handleCharacterPointerUp);els.characterCanvas.addEventListener('pointercancel',handleCharacterPointerUp);els.characterCanvas.addEventListener('wheel',handleCharacterWheel,{passive:false});
   els.skinFileInput.addEventListener('change',e=>{const f=e.target.files?.[0];if(f)loadImageAsSkin(f,true);e.target.value='';});els.importBtn.addEventListener('click',()=>els.skinFileInput.click());els.heroUploadBtn.addEventListener('click',()=>els.skinFileInput.click());
   els.customTextureBtn.addEventListener('click',()=>els.customTextureInput.click());els.customTextureInput.addEventListener('change',e=>{const f=e.target.files?.[0];if(f)loadImageAsSkin(f,true);e.target.value='';});
   els.referenceBtn.addEventListener('click',()=>els.referenceFileInput.click());els.referenceFileInput.addEventListener('change',e=>{const f=e.target.files?.[0];if(f)loadReference(f);e.target.value='';});els.referenceToggle.addEventListener('change',()=>{state.referenceVisible=els.referenceToggle.checked;renderEditor();});els.referenceOpacity.addEventListener('input',()=>{state.referenceOpacity=Number(els.referenceOpacity.value)/100;updateControlLabels();renderEditor();});els.clearReferenceBtn.addEventListener('click',()=>{state.reference=null;state.referenceVisible=false;els.referenceToggle.checked=false;renderEditor();});
@@ -748,12 +724,13 @@ function setupEvents(){
   els.exportBtn.addEventListener('click',exportPNG);els.saveLibraryBtn.addEventListener('click',saveLibrary);
   els.guideBtn.addEventListener('click',()=>els.guideModal.hidden=false);document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>$(b.dataset.close).hidden=true));document.querySelectorAll('.modal-backdrop').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.hidden=true;}));
   els.gridBtn.addEventListener('click',()=>{state.grid=!state.grid;els.gridToggle.checked=state.grid;renderEditor();});els.checkerBtn.addEventListener('click',()=>{state.checker=!state.checker;els.checkerToggle.checked=state.checker;renderEditor();});
-  window.addEventListener('resize',()=>{fitEditorView();render3D(true);});window.addEventListener('beforeunload',persistAutosave);setInterval(persistAutosave,5000);
+  window.addEventListener('resize',()=>{fitEditorView();previewRenderer.fit();});
+  bindPreviewCameraGestures();window.addEventListener('beforeunload',persistAutosave);setInterval(persistAutosave,5000);
 }
 
 function bootstrap(){
-  state.toolOpacity=100;state.brushSize=1;els.brushOpacity.value=100;els.brushSize.value=1;els.brushShape.value='square';els.pixelPerfect.checked=true;
-  renderFocusModal();createBlankTexture(64);state.history=[];state.historyIndex=-1;pushHistory();syncSelectors();fitEditorView();renderSwatches();render3D(true);renderChecks();renderLibrary();updateControlLabels();setTool('pencil');setLayer('both');
+  state.mode='2d';state.toolOpacity=100;state.brushSize=1;els.brushOpacity.value=100;els.brushSize.value=1;els.brushShape.value='square';els.pixelPerfect.checked=true;
+  renderFocusModal();createBlankTexture(64);state.history=[];state.historyIndex=-1;pushHistory();syncSelectors();fitEditorView();previewRenderer.fit();renderSwatches();renderChecks();renderLibrary();updateControlLabels();setTool('pencil');setLayer('both');
   const recovered=loadAutosave();
   if(!recovered){fitEditorView();renderAll();}
 }
