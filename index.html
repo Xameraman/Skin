@@ -66,10 +66,8 @@
           <label>Opacity <output id="brushOpacityValue">100%</output></label>
           <input id="brushOpacity" type="range" min="10" max="100" value="100" step="5" />
         </div>
-        <div class="segmented" role="group" aria-label="Brush shape">
-          <button class="seg active" data-brush-shape="square">Square</button>
-          <button class="seg" data-brush-shape="circle">Circle</button>
-        </div>
+        <div class="control-row inline"><label>Shape</label><select id="brushShape"><option value="square">Square</option><option value="circle">Circle</option></select></div>
+        <div class="control-row inline"><label>Brush mode</label><select id="brushMode"><option value="hard">Hard pixel</option><option value="soft">Soft pixel</option></select></div>
         <div class="control-row inline">
           <label>Shade</label>
           <select id="shadeMode"><option value="lighten">Lighten</option><option value="darken">Darken</option></select>
@@ -112,6 +110,10 @@
       <section class="panel-section">
         <div class="section-heading"><span>History</span></div>
         <div class="history-buttons"><button class="mini-btn wide" id="undoBtn">↶ Undo</button><button class="mini-btn wide" id="redoBtn">↷ Redo</button></div>
+      </section>
+      <section class="panel-section library-panel">
+        <div class="section-heading"><span>My skins</span><button class="tiny-link" id="librarySaveBtn">Save current</button></div>
+        <div id="libraryList" class="library-list"></div>
       </section>
     </aside>
 
@@ -170,8 +172,8 @@
       </section>
 
       <section class="panel-section geometry-panel">
-        <div class="section-heading"><span>Custom geometry lab</span><span class="live-pill warning-pill">EXPERIMENTAL</span></div>
-        <p class="section-copy"><strong>Experimental custom geometry.</strong> This is a separate preview prototype, not part of a normal skin PNG. Exported PNGs do not contain the extra geometry, and compatibility with a given Minecraft workflow is not guaranteed.</p>
+        <div class="section-heading"><span>5D / Custom geometry lab</span><span class="live-pill warning-pill">EXPERIMENTAL</span></div>
+        <p class="section-copy"><strong>5D is community terminology, not a standard PNG skin feature.</strong> This lab lets you preview an extra 3D box and export a Bedrock geometry prototype. A normal skin PNG does not contain extra geometry, and a standard skin-pack JSON cannot add arbitrary custom player models. Test the exported geometry only in a workflow that supports custom geometry.</p>
         <label class="toggle-row"><span>Show extra box</span><input id="geometryToggle" type="checkbox"><i></i></label>
         <div class="geometry-grid">
           <label>W<input id="geoW" type="number" min="0.5" max="16" step="0.5" value="4"></label>
