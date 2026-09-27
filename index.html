@@ -1,168 +1,215 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="midnight">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0d12" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0e14" />
   <title>Nova Skin Studio — MCPE Skin Creator</title>
-  <meta name="description" content="A crisp, mobile-first Minecraft Bedrock skin creator." />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <meta name="description" content="A mobile-first Minecraft Bedrock skin editor with precise pixels, brush tools, real 3D preview, animation, reference images and experimental geometry tools." />
   <link rel="stylesheet" href="src/styles.css" />
 </head>
 <body>
-  <div class="app-shell">
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-        <div>
-          <div class="brand-name">Nova Skin Studio</div>
-          <div class="brand-subtitle">MCPE / Bedrock skin creator</div>
-        </div>
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div>
+        <div class="brand-name">Nova Skin Studio</div>
+        <div class="brand-subtitle">MCPE / Bedrock skin creator</div>
       </div>
+    </div>
+    <div class="top-actions">
+      <label class="theme-picker" title="Theme">
+        <span>Theme</span>
+        <select id="themeSelect">
+          <option value="midnight">Midnight</option>
+          <option value="graphite">Graphite</option>
+          <option value="light">Light</option>
+          <option value="contrast">High contrast</option>
+        </select>
+      </label>
+      <button class="ghost-btn" id="newSkinBtn">New</button>
+      <button class="ghost-btn" id="templateBtn">Template</button>
+      <button class="ghost-btn" id="referenceBtn">Reference</button>
+      <button class="ghost-btn" id="importBtn">Import Skin</button>
+      <button class="primary-btn" id="exportBtn">Download PNG</button>
+      <input id="skinFileInput" type="file" accept="image/png,.png" hidden />
+      <input id="referenceFileInput" type="file" accept="image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp" hidden />
+    </div>
+  </header>
 
-      <div class="top-actions">
-        <button class="ghost-btn" id="newSkinBtn" title="Load a complete starter skin">New</button>
-        <button class="ghost-btn" id="templateBtn" title="Load the complete editable template">Template</button>
-        <button class="ghost-btn" id="importBtn" title="Import a PNG skin">Import</button>
-        <button class="primary-btn" id="exportBtn" title="Download your skin as PNG">Download PNG</button>
-        <input type="file" id="fileInput" accept="image/png,.png" hidden />
-      </div>
-    </header>
-
-    <main class="workspace">
-      <aside class="sidebar left-panel" aria-label="Editor tools">
-        <section class="panel-section tools-section">
-          <div class="section-heading"><span>Tools</span><kbd>1–6</kbd></div>
-          <div class="tool-grid">
-            <button class="tool-btn active" data-tool="pencil" title="Pencil (1)"><span class="tool-icon">✎</span><span>Pencil</span></button>
-            <button class="tool-btn" data-tool="eraser" title="Eraser (2)"><span class="tool-icon">⌫</span><span>Eraser</span></button>
-            <button class="tool-btn" data-tool="fill" title="Fill (3)"><span class="tool-icon">▧</span><span>Fill</span></button>
-            <button class="tool-btn" data-tool="picker" title="Eyedropper (4)"><span class="tool-icon">◉</span><span>Pick</span></button>
-            <button class="tool-btn" data-tool="line" title="Line (5)"><span class="tool-icon">╱</span><span>Line</span></button>
-            <button class="tool-btn" data-tool="rect" title="Rectangle (6)"><span class="tool-icon">□</span><span>Rect</span></button>
-          </div>
-        </section>
-
-        <section class="panel-section">
-          <div class="section-heading"><span>View</span></div>
-          <div class="view-buttons">
-            <button class="mini-btn" id="zoomOutBtn">−</button>
-            <div class="zoom-readout" id="zoomReadout">1000%</div>
-            <button class="mini-btn" id="zoomInBtn">+</button>
-            <button class="mini-btn wide" id="fitBtn">Fit</button>
-          </div>
-          <label class="toggle-row"><span>Pixel grid</span><input type="checkbox" id="gridToggle" checked /><i></i></label>
-          <label class="toggle-row"><span>Checkerboard</span><input type="checkbox" id="checkerToggle" checked /><i></i></label>
-          <label class="toggle-row"><span>Mirror paint</span><input type="checkbox" id="mirrorToggle" /><i></i></label>
-          <label class="toggle-row"><span>Outer layer</span><input type="checkbox" id="outerToggle" checked /><i></i></label>
-        </section>
-
-        <section class="panel-section">
-          <div class="section-heading"><span>Palette</span><button class="tiny-link" id="clearHistoryBtn">Clear recent</button></div>
-          <div class="color-editor">
-            <input type="color" id="colorInput" value="#7fd7ff" aria-label="Color picker" />
-            <div class="hex-wrap"><span>#</span><input id="hexInput" value="7FD7FF" maxlength="6" spellcheck="false" aria-label="Hex color" /></div>
-          </div>
-          <div class="swatches" id="swatches"></div>
-        </section>
-
-        <section class="panel-section">
-          <div class="section-heading"><span>History</span></div>
-          <div class="history-buttons">
-            <button class="mini-btn wide" id="undoBtn">↶ Undo <kbd>Ctrl+Z</kbd></button>
-            <button class="mini-btn wide" id="redoBtn">↷ Redo <kbd>Ctrl+Y</kbd></button>
-          </div>
-        </section>
-      </aside>
-
-      <section class="center-stage">
-        <div class="stage-topline">
-          <div class="document-meta">
-            <span class="status-dot"></span>
-            <span id="docStatus">Complete Starter Template</span>
-            <span class="meta-divider">•</span>
-            <span>64×64</span>
-          </div>
-          <div class="model-picker">
-            <span>Model</span>
-            <select id="modelSelect" aria-label="Skin model"><option value="classic">Classic · 4px arms</option><option value="slim">Slim · 3px arms</option></select>
-          </div>
-          <div class="stage-actions">
-            <button class="icon-btn" id="checkerBtn" title="Toggle checkerboard">▦</button>
-            <button class="icon-btn" id="gridBtn" title="Toggle pixel grid">#</button>
-          </div>
-        </div>
-
-        <div class="editor-canvas-wrap" id="canvasWrap">
-          <div class="canvas-shadow"></div>
-          <canvas id="editorCanvas" width="640" height="640" aria-label="Minecraft skin texture editor"></canvas>
-          <div class="canvas-hint">Drag to paint • Pinch/scroll to zoom • Right-click to pick</div>
-        </div>
-
-        <div class="bottom-toolbar">
-          <div class="tool-context">
-            <span class="context-label">Active</span>
-            <strong id="activeToolLabel">Pencil</strong>
-            <span class="context-separator">·</span>
-            <span id="cursorReadout">X: — Y: —</span>
-          </div>
-          <div class="quick-colors" id="quickColors"></div>
+  <main class="workspace">
+    <aside class="sidebar left-panel">
+      <section class="panel-section">
+        <div class="section-heading"><span>Draw</span><span class="micro-note">pixel-safe</span></div>
+        <div class="tool-grid">
+          <button class="tool-btn active" data-tool="pencil" title="Pencil"><b>✎</b><span>Pencil</span></button>
+          <button class="tool-btn" data-tool="brush" title="Brush"><b>◌</b><span>Brush</span></button>
+          <button class="tool-btn" data-tool="eraser" title="Eraser"><b>⌫</b><span>Eraser</span></button>
+          <button class="tool-btn" data-tool="fill" title="Fill"><b>▧</b><span>Fill</span></button>
+          <button class="tool-btn" data-tool="picker" title="Eyedropper"><b>◉</b><span>Pick</span></button>
+          <button class="tool-btn" data-tool="line" title="Line"><b>╱</b><span>Line</span></button>
+          <button class="tool-btn" data-tool="rect" title="Rectangle"><b>□</b><span>Rect</span></button>
+          <button class="tool-btn" data-tool="circle" title="Circle"><b>○</b><span>Circle</span></button>
+          <button class="tool-btn" data-tool="shade" title="Shade"><b>☼</b><span>Shade</span></button>
+          <button class="tool-btn" data-tool="replace" title="Replace color"><b>↺</b><span>Replace</span></button>
         </div>
       </section>
 
-      <aside class="sidebar right-panel" aria-label="Preview and skin helpers">
-        <section class="panel-section preview-section">
-          <div class="section-heading"><span>Preview</span><span class="live-pill">LIVE</span></div>
-          <div class="preview-card" id="previewCard">
-            <canvas id="previewCanvas" width="360" height="420"></canvas>
-            <div class="preview-overlay">drag to rotate</div>
-          </div>
-          <div class="preview-controls">
-            <button class="mini-btn" id="frontBtn">Front</button>
-            <button class="mini-btn" id="backBtn">Back</button>
-            <button class="mini-btn" id="resetViewBtn">Reset</button>
-          </div>
-        </section>
-
-        <section class="panel-section">
-          <div class="section-heading"><span>Skin checks</span></div>
-          <div class="checks" id="checks"></div>
-        </section>
-
-        <section class="panel-section guide-section">
-          <div class="section-heading"><span>Template guide</span><span class="live-pill">GAME-READY</span></div>
-          <p>Start from the complete 64×64 template, then edit it pixel by pixel. The preview follows the same texture map used for export.</p>
-          <div class="guide-actions"><button class="mini-btn" id="guideBtn">View map</button><button class="mini-btn" id="downloadTemplateBtn">Download template</button></div>
-        </section>
-
-        <section class="panel-section tips-section">
-          <div class="section-heading"><span>Pixel tip</span></div>
-          <p id="pixelTip">Keep hard edges clean. One texture pixel should stay one deliberate pixel — avoid soft brushes and blurred scaling.</p>
-        </section>
-      </aside>
-    </main>
-
-    <div class="guide-modal" id="guideModal" hidden>
-      <div class="guide-dialog" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
-        <div class="guide-dialog-top">
-          <div><div class="guide-eyebrow">64×64 TEXTURE MAP</div><h2 id="guideTitle">Complete skin template guide</h2></div>
-          <button class="icon-btn" id="closeGuideBtn" aria-label="Close guide">×</button>
+      <section class="panel-section">
+        <div class="section-heading"><span>Brush</span></div>
+        <div class="control-row">
+          <label>Size <output id="brushSizeValue">1 px</output></label>
+          <input id="brushSize" type="range" min="1" max="8" value="1" step="1" />
         </div>
-        <div class="guide-body">
-          <canvas id="guideCanvas" width="768" height="768"></canvas>
-          <div class="guide-copy">
-            <p><strong>Use Template</strong> loads a filled, editable starter with all of the main skin regions already mapped.</p>
-            <p><strong>Do not paint by appearance alone.</strong> The texture is an unfolded 3D model, so a single face can continue onto another part of the image.</p>
-            <p><strong>Classic</strong> uses 4-pixel-wide arms. <strong>Slim</strong> uses 3-pixel-wide arms. Minecraft's official guide distinguishes these models by arm width. <a href="https://www.minecraft.net/en-us/article/what-is-minecraft-skin" target="_blank" rel="noreferrer">Minecraft guide</a></p>
-          </div>
+        <div class="control-row">
+          <label>Opacity <output id="brushOpacityValue">100%</output></label>
+          <input id="brushOpacity" type="range" min="10" max="100" value="100" step="5" />
+        </div>
+        <div class="segmented" role="group" aria-label="Brush shape">
+          <button class="seg active" data-brush-shape="square">Square</button>
+          <button class="seg" data-brush-shape="circle">Circle</button>
+        </div>
+        <div class="control-row inline">
+          <label>Shade</label>
+          <select id="shadeMode"><option value="lighten">Lighten</option><option value="darken">Darken</option></select>
+        </div>
+        <div class="control-row">
+          <label>Replace tolerance <output id="toleranceValue">0</output></label>
+          <input id="replaceTolerance" type="range" min="0" max="60" value="0" step="1" />
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-heading"><span>Canvas view</span></div>
+        <div class="view-buttons">
+          <button class="mini-btn" id="zoomOutBtn">−</button>
+          <div class="zoom-readout" id="zoomReadout">100%</div>
+          <button class="mini-btn" id="zoomInBtn">+</button>
+          <button class="mini-btn wide" id="fitBtn">Fit</button>
+        </div>
+        <div class="sub-actions"><button class="mini-btn wide" id="centerCanvasBtn">Center</button><button class="mini-btn wide" id="clearReferenceBtn">Clear ref</button></div>
+        <label class="toggle-row"><span>Pixel grid</span><input id="gridToggle" type="checkbox" checked><i></i></label>
+        <label class="toggle-row"><span>Checkerboard</span><input id="checkerToggle" type="checkbox" checked><i></i></label>
+        <label class="toggle-row"><span>Mirror paint</span><input id="mirrorToggle" type="checkbox"><i></i></label>
+        <label class="toggle-row"><span>Show outer layer</span><input id="outerToggle" type="checkbox" checked><i></i></label>
+        <label class="toggle-row"><span>Show reference</span><input id="referenceToggle" type="checkbox"><i></i></label>
+        <div class="control-row">
+          <label>Reference opacity <output id="referenceOpacityValue">35%</output></label>
+          <input id="referenceOpacity" type="range" min="5" max="90" value="35" step="5" />
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-heading"><span>Palette</span><button class="tiny-link" id="clearHistoryBtn">Clear recent</button></div>
+        <div class="color-editor">
+          <input id="colorInput" type="color" value="#7fd7ff" aria-label="Color" />
+          <div class="hex-wrap"><span>#</span><input id="hexInput" value="7FD7FF" maxlength="6" inputmode="text" spellcheck="false" aria-label="Hex color" /></div>
+        </div>
+        <div class="swatches" id="swatches"></div>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-heading"><span>History</span></div>
+        <div class="history-buttons"><button class="mini-btn wide" id="undoBtn">↶ Undo</button><button class="mini-btn wide" id="redoBtn">↷ Redo</button></div>
+      </section>
+    </aside>
+
+    <section class="center-stage">
+      <div class="stage-topline">
+        <div class="document-meta"><span class="status-dot"></span><strong id="docStatus">Complete Classic Starter</strong><span>•</span><span>64×64</span></div>
+        <div class="model-picker"><span>Model</span><select id="modelSelect"><option value="classic">Classic / Steve · 4px arms</option><option value="slim">Slim / Alex · 3px arms</option></select></div>
+        <div class="stage-actions"><button class="icon-btn" id="gridBtn">#</button><button class="icon-btn" id="checkerBtn">▦</button><button class="icon-btn" id="guideBtn">?</button></div>
+      </div>
+
+      <div class="editor-canvas-wrap" id="canvasWrap">
+        <canvas id="editorCanvas" aria-label="64 by 64 skin editor" width="900" height="900"></canvas>
+        <div class="reference-chip" id="referenceChip" hidden>REFERENCE LOADED</div>
+        <div class="canvas-help">1 finger / mouse = paint • 2 fingers = pan + zoom • wheel = zoom • right-click = pick</div>
+      </div>
+      <div class="bottom-toolbar">
+        <div class="tool-context"><span class="context-label">Tool</span><strong id="activeToolLabel">Pencil</strong><span class="context-separator">•</span><span id="cursorReadout">X: — Y: —</span></div>
+        <div class="quick-colors" id="quickColors"></div>
+      </div>
+    </section>
+
+    <aside class="sidebar right-panel">
+      <section class="panel-section preview-section">
+        <div class="section-heading"><span>3D preview</span><span class="live-pill">LIVE TEXTURE</span></div>
+        <div class="preview-card" id="previewCard">
+          <canvas id="previewCanvas" aria-label="3D Minecraft skin preview" width="420" height="500"></canvas>
+          <div class="preview-help">drag = orbit • wheel / pinch = zoom</div>
+        </div>
+        <div class="preview-controls"><button class="mini-btn" id="frontBtn">Front</button><button class="mini-btn" id="topBtn">Top</button><button class="mini-btn" id="backBtn">Back</button><button class="mini-btn" id="sideBtn">Side</button><button class="mini-btn" id="resetViewBtn">Reset</button><button class="mini-btn" id="previewZoomFitBtn">Fit</button></div>
+      </section>
+
+      <section class="panel-section animation-panel">
+        <div class="section-heading"><span>Animation</span><span class="live-pill" id="animationStatus">OFF</span></div>
+        <div class="control-row inline"><label>Pose</label><select id="animationSelect"><option value="idle">Idle</option><option value="walk">Walk</option><option value="mine">Mining</option></select></div>
+        <div class="sub-actions"><button class="mini-btn wide" id="animationToggle">Play</button><button class="mini-btn wide" id="animationReset">Reset pose</button></div>
+        <div class="control-row"><label>Speed <output id="animationSpeedValue">1.0×</output></label><input id="animationSpeed" type="range" min="0.25" max="2" value="1" step="0.05"></div>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-heading"><span>Skin checks</span></div>
+        <div class="checks" id="checks"></div>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-heading"><span>Reference image</span><span class="micro-note">trace mode</span></div>
+        <p id="referenceText" class="section-copy">Upload a screenshot/photo to use as a translucent drawing reference. A valid 64×64 PNG should be imported with Import Skin so it stays game-accurate.</p>
+        <div class="guide-actions"><button class="mini-btn" id="referenceButton2">Add image</button><button class="mini-btn" id="useReferenceAsSkinBtn">Use as skin</button></div>
+      </section>
+
+      <section class="panel-section geometry-panel">
+        <div class="section-heading"><span>Custom geometry lab</span><span class="live-pill warning-pill">EXPERIMENTAL</span></div>
+        <p class="section-copy"><strong>4D / custom geometry is not a normal PNG skin.</strong> This preview lets you prototype an extra 3D box. The downloaded PNG does not contain this geometry.</p>
+        <label class="toggle-row"><span>Show extra box</span><input id="geometryToggle" type="checkbox"><i></i></label>
+        <div class="geometry-grid">
+          <label>W<input id="geoW" type="number" min="0.5" max="16" step="0.5" value="4"></label>
+          <label>H<input id="geoH" type="number" min="0.5" max="24" step="0.5" value="4"></label>
+          <label>D<input id="geoD" type="number" min="0.5" max="16" step="0.5" value="4"></label>
+          <label>X<input id="geoX" type="number" min="-12" max="12" step="0.5" value="0"></label>
+          <label>Y<input id="geoY" type="number" min="-16" max="16" step="0.5" value="10"></label>
+          <label>Z<input id="geoZ" type="number" min="-12" max="12" step="0.5" value="0"></label>
+          <label>RX<input id="geoRX" type="number" min="-180" max="180" step="1" value="0"></label>
+          <label>RY<input id="geoRY" type="number" min="-180" max="180" step="1" value="0"></label>
+          <label>RZ<input id="geoRZ" type="number" min="-180" max="180" step="1" value="0"></label>
+        </div>
+        <div class="sub-actions"><button class="mini-btn wide" id="geoResetBtn">Reset box</button><button class="mini-btn wide" id="geoExportBtn">Export JSON</button></div>
+      </section>
+
+      <section class="panel-section guide-section">
+        <div class="section-heading"><span>Template guide</span></div>
+        <p class="section-copy">Think of the 64×64 PNG as a flat pattern that wraps around the character. The guide names each body part and face so you do not have to guess from color blocks.</p>
+        <div class="guide-actions"><button class="mini-btn" id="guideBtn2">Open guide</button><button class="mini-btn" id="downloadTemplateBtn">Download starter</button></div>
+      </section>
+    </aside>
+  </main>
+
+  <div class="guide-modal" id="guideModal" hidden>
+    <div class="guide-dialog" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
+      <header class="guide-dialog-top"><div><div class="guide-eyebrow">64×64 SKIN MAP</div><h2 id="guideTitle">Template guide</h2><p class="guide-lead">The texture is unfolded. The same head, body, arm and leg is split into top, bottom, left, front, right and back faces.</p></div><button class="icon-btn" id="closeGuideBtn">×</button></header>
+      <div class="guide-body">
+        <div class="map-card"><canvas id="guideCanvas" width="768" height="768"></canvas></div>
+        <div class="guide-copy">
+          <h3>How to read it</h3>
+          <div class="guide-item"><b>TOP</b><span>The surface above the part.</span></div>
+          <div class="guide-item"><b>FRONT</b><span>The side you normally see first.</span></div>
+          <div class="guide-item"><b>BACK</b><span>The opposite side of FRONT.</span></div>
+          <div class="guide-item"><b>LEFT / RIGHT</b><span>Character's left and right, not your screen's left and right.</span></div>
+          <div class="guide-item"><b>BOTTOM</b><span>The underside.</span></div>
+          <h3>Model difference</h3>
+          <p>Classic has wider arms; Slim has narrower arms. Nova uses a different 3D arm width for each model so the preview does not pretend they are the same.</p>
+          <h3>Best workflow</h3>
+          <p>Start with Template → recolor → use Brush/Symmetry → orbit the 3D model → inspect the outer layer → export PNG.</p>
         </div>
       </div>
     </div>
-    <div class="toast-region" id="toastRegion" aria-live="polite"></div>
   </div>
 
-  <script src="src/app.js" type="module"></script>
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+</div>
+<script src="src/app.js" type="module"></script>
 </body>
 </html>
